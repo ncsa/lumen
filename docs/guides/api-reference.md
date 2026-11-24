@@ -44,6 +44,7 @@ Admin keys **cannot chat**: they are for monitoring and the [admin API](#admin-a
 | `POST` | `/v1/embeddings` | Turn text or token ids into embedding vectors |
 | `POST` | `/v1/messages` | Anthropic Messages API, see [Anthropic API](anthropic.md) |
 | `POST` | `/v1/messages/count_tokens` | Estimate the prompt tokens of a Messages request |
+| `GET` | `/v1/organization/users` | Admin API: list users (admin key only) |
 | `GET` | `/v1/organization/users/<user_id>` | Admin API: one user's details (admin key only) |
 
 ---
@@ -542,7 +543,7 @@ Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`:
 
 | Status | When |
 |--------|------|
-| `400` | Missing or malformed `Authorization` header |
+| `400` | Missing or malformed `Authorization` header, or a bad list parameter (`param` names it) |
 | `401` | Unknown, revoked or expired key, an admin key whose owner is no longer an admin or is inactive, or a non-ASCII token |
 | `403` | A normal key, a monitoring key or `api.monitoring.token` (`permission_error`, "This endpoint requires an admin key") |
 | `404` | No such user (`code: user_not_found`) |
@@ -552,7 +553,53 @@ Requests are never billed and are not written to the request log.
 
 ### Ids
 
-Users and groups are named with a prefixed uuid, the same uuid the admin pages show: `user-<uuid>` and `group-<uuid>` (lowercase, dashed). Anything else, a project or an unknown uuid, gets `404`.
+Users and groups are named with a prefixed uuid, the same uuid the admin pages show: `user-<uuid>` and `group-<uuid>` (lowercase, dashed). On [Retrieve a user](#retrieve-a-user), anything else, a project or an unknown uuid, gets `404`; on [List users](#list-users), a bad `after` or `group` gets `400`.
+
+### List users
+
+```bash
+curl "https://lumen.example.com/v1/organization/users?limit=1&sort_by=last_active" \
+  -H "Authorization: Bearer sk_admin_your_admin_key_here"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "organization.user",
+      "id": "user-3f6c1d2e-8a4b-4c1e-9f0a-1b2c3d4e5f60",
+      "name": "Ada Lovelace",
+      "email": "ada@example.edu",
+      "role": "reader",
+      "added_at": 1732291200,
+      "lumen": {
+        "status": "active",
+        "groups": [{"id": "group-0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", "name": "students"}],
+        "last_active_at": 1732291200
+      }
+    }
+  ],
+  "first_id": "user-3f6c1d2e-8a4b-4c1e-9f0a-1b2c3d4e5f60",
+  "last_id": "user-3f6c1d2e-8a4b-4c1e-9f0a-1b2c3d4e5f60",
+  "has_more": true,
+  "total": 42
+}
+```
+
+Each user is the same object as [Retrieve a user](#retrieve-a-user) returns, without `lumen.coins` and `lumen.api_key_count`. Only users are listed, never projects.
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `limit` | `20` | Users per page, `1` to `100` |
+| `after` | | A user id, usually the previous page's `last_id`; the page starts after that user |
+| `sort_by` | `created_at` | `created_at`, `last_active` or `email` |
+| `sort_order` | `desc` | `asc` or `desc`. With `last_active`, users who were never active come last in both orders |
+| `search` | | Part of the name or email, case-insensitive; `%` and `_` match themselves |
+| `group` | | Only members of this group, given by its id (`group-<uuid>`); a group name gets `400` |
+| `status` | | `active` or `inactive` |
+
+To fetch every user, repeat the request with `after` set to `last_id` until `has_more` is `false`. `total` counts every user that matches the filters, whatever `after` is. An `after` that is not a user id gets `400`.
 
 ### Retrieve a user
 

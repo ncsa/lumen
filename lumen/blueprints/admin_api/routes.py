@@ -12,7 +12,7 @@ from functools import wraps
 from http import HTTPStatus
 
 from flask import Blueprint, current_app, g, jsonify, request
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 
 from lumen.blueprints.api.routes import _api_key_id, _api_limit, _err
 from lumen.blueprints.profile.routes import _memberships_by_entity
@@ -21,7 +21,15 @@ from lumen.extensions import db, limiter
 from lumen.models.api_key import KEY_TYPE_ADMIN, KEY_TYPE_NORMAL, APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_stat import EntityStat
-from lumen.models.lookups import GROUP_ID_PREFIX, USER_ID_PREFIX, prefixed_id, user_by_prefixed_id
+from lumen.models.group import Group
+from lumen.models.group_member import GroupMember
+from lumen.models.lookups import (
+    GROUP_ID_PREFIX,
+    USER_ID_PREFIX,
+    parse_prefixed_id,
+    prefixed_id,
+    user_by_prefixed_id,
+)
 from lumen.services.api_auth import KeyRejected, resolve_api_key
 from lumen.services.llm import REFILL_INTERVAL, _load_pool_state
 from lumen.timeutils import utcnow
@@ -32,6 +40,17 @@ admin_api_bp = Blueprint("admin_api", __name__, url_prefix="/v1/organization")
 admin_api_limit = limiter.shared_limit(_api_limit, scope="admin_api", key_func=_api_key_id)
 
 ADMIN_KEY_REQUIRED = "This endpoint requires an admin key"
+
+LIST_LIMIT_DEFAULT = 20
+LIST_LIMIT_MAX = 100
+SORT_BY = ("created_at", "last_active", "email")
+SORT_ORDER = ("asc", "desc")
+STATUS = {"active": True, "inactive": False}
+# Stand-ins for nulls in the sort keys, so keyset comparisons never meet a null.
+# A never-active user gets the end of the timeline that sorts last in the
+# requested direction; a user without created_at sorts as the oldest.
+_EARLIEST = datetime(1970, 1, 1)
+_LATEST = datetime(9999, 12, 31)
 
 
 def admin_key_required(f):
@@ -137,3 +156,94 @@ def get_user(user_id):
     user["lumen"]["coins"] = _coins(entity.id)
     user["lumen"]["api_key_count"] = _api_key_count(entity.id)
     return jsonify(user)
+
+
+def _param_err(message: str, param: str):
+    """A 400 ``invalid_request_error`` naming the offending query parameter."""
+    return jsonify({"error": {"message": message, "type": "invalid_request_error", "param": param}}), HTTPStatus.BAD_REQUEST
+
+
+def _sort_key(sort_by: str, sort_order: str):
+    """The non-null sort expression for ``sort_by``; never-active users last in either order."""
+    if sort_by == "last_active":
+        return func.coalesce(EntityStat.last_used_at, _EARLIEST if sort_order == "desc" else _LATEST)
+    if sort_by == "email":
+        return func.coalesce(Entity.email, "")
+    return func.coalesce(Entity.created_at, _EARLIEST)
+
+
+@admin_api_bp.route("/users", methods=["GET"])
+@admin_key_required
+@admin_api_limit
+def list_users():
+    """Users, keyset-paged on ``(sort value, entity id)``; ``after`` is the last user id of the previous page."""
+    args = request.args
+    try:
+        limit = int(args.get("limit", LIST_LIMIT_DEFAULT))
+    except ValueError:
+        limit = 0
+    if not 1 <= limit <= LIST_LIMIT_MAX:
+        return _param_err(f"limit must be an integer from 1 to {LIST_LIMIT_MAX}", "limit")
+    sort_by = args.get("sort_by", "created_at")
+    if sort_by not in SORT_BY:
+        return _param_err(f"sort_by must be one of: {', '.join(SORT_BY)}", "sort_by")
+    sort_order = args.get("sort_order", "desc")
+    if sort_order not in SORT_ORDER:
+        return _param_err("sort_order must be asc or desc", "sort_order")
+
+    filters = [Entity.entity_type == "user"]
+    search = args.get("search", "").strip()
+    # PostgreSQL text cannot hold NUL: the bind would raise and answer 500.
+    if "\x00" in search:
+        return _param_err("search must not contain a NUL character", "search")
+    if search:
+        # A literal substring: %, _ and the escape character match themselves.
+        filters.append(or_(Entity.name.icontains(search, autoescape=True),
+                           Entity.email.icontains(search, autoescape=True)))
+    if "group" in args:
+        group_uuid = parse_prefixed_id(args["group"], GROUP_ID_PREFIX)
+        group_pk = group_uuid and db.session.scalar(select(Group.id).where(Group.uuid == group_uuid))
+        if not group_pk:
+            return _param_err(f"No group found with id '{args['group']}'; use a group-<uuid> id", "group")
+        filters.append(exists().where(GroupMember.group_id == group_pk, GroupMember.entity_id == Entity.id))
+    if "status" in args:
+        if args["status"] not in STATUS:
+            return _param_err("status must be active or inactive", "status")
+        filters.append(Entity.active.is_(STATUS[args["status"]]))
+
+    total = db.session.scalar(select(func.count()).select_from(Entity).where(*filters))
+
+    sort_key = _sort_key(sort_by, sort_order)
+    page = select(Entity, EntityStat.last_used_at).outerjoin(EntityStat, Entity.id == EntityStat.entity_id).where(*filters)
+    if "after" in args:
+        after_uuid = parse_prefixed_id(args["after"], USER_ID_PREFIX)
+        cursor = after_uuid and db.session.execute(
+            select(sort_key, Entity.id)
+            .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
+            .where(Entity.uuid == after_uuid, Entity.entity_type == "user")
+        ).one_or_none()
+        if not cursor:
+            return _param_err(f"No user found with id '{args['after']}'", "after")
+        after_value, after_pk = cursor
+        if sort_order == "desc":
+            page = page.where(or_(sort_key < after_value, and_(sort_key == after_value, Entity.id < after_pk)))
+        else:
+            page = page.where(or_(sort_key > after_value, and_(sort_key == after_value, Entity.id > after_pk)))
+    if sort_order == "desc":
+        page = page.order_by(sort_key.desc(), Entity.id.desc())
+    else:
+        page = page.order_by(sort_key.asc(), Entity.id.asc())
+
+    rows = db.session.execute(page.limit(limit + 1)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    memberships = _memberships_by_entity([entity.id for entity, _ in rows])
+    data = [_user_object(entity, memberships.get(entity.id, []), last_active_at) for entity, last_active_at in rows]
+    return jsonify({
+        "object": "list",
+        "data": data,
+        "first_id": data[0]["id"] if data else None,
+        "last_id": data[-1]["id"] if data else None,
+        "has_more": has_more,
+        "total": total,
+    })
