@@ -506,11 +506,15 @@ function collectApi() {
   const ttl  = val('keys-ttl').trim();
   // Keep api.* keys this section has no card for.
   const prev = state.data.api && typeof state.data.api === 'object' ? state.data.api : {};
+  // Keep api.keys settings this card has no field for (max_ttl, default_ttl, ...).
+  const prevKeys = prev.keys && typeof prev.keys === 'object' ? prev.keys : {};
+  const keysObj = { ...prevKeys, ttl: ttl || undefined };
+  const keys = Object.values(keysObj).some(v => v !== undefined) ? keysObj : undefined;
   state.data.api = {
     ...prev,
     prometheus: Object.values(prom).some(v => v !== undefined) ? prom : undefined,
     monitoring: mon,
-    keys: ttl ? { ttl } : undefined,
+    keys: keys,
   };
 }
 

@@ -73,6 +73,21 @@ def test_hot_config_sets_per_type_and_default_ttl(app, restore_config, caplog):
     assert caplog.text == ""
 
 
+@pytest.mark.parametrize("keys, key_type, expected", [
+    # A supported duration above the maximum loads without a warning and is lowered at use.
+    ({"max_ttl": "90d", "default_ttl": "365d"}, KEY_TYPE_NORMAL, 90 * DAY),
+    ({"default_ttl": "30d"}, KEY_TYPE_ADMIN, 7 * DAY),
+    ({"max_monitor_ttl": "1w", "default_ttl": "4w"}, KEY_TYPE_MONITORING, 7 * DAY),
+])
+def test_loaded_default_ttl_is_lowered_to_the_max(app, restore_config, caplog, keys, key_type, expected):
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        apply_hot_config(app, {"api": {"keys": keys}})
+    assert caplog.text == ""
+    assert app.config["KEY_DEFAULT_TTL"] == parse_key_ttl(keys["default_ttl"])
+    with app.app_context():
+        assert resolve_key_ttl(None, key_type) == expected
+
+
 def test_hot_config_default_ttl_zero_is_never(app, restore_config):
     apply_hot_config(app, {"api": {"keys": {"default_ttl": 0}}})
     assert app.config["KEY_DEFAULT_TTL"] == 0
