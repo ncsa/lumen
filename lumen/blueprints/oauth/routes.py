@@ -22,7 +22,7 @@ from http import HTTPStatus
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
-from flask import Blueprint, g, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from sqlalchemy import case, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
@@ -32,6 +32,7 @@ from lumen.extensions import _chat_entity_id, _chat_limit, db, limiter
 from lumen.models.api_key import KEY_TYPE_NORMAL, APIKey
 from lumen.models.auth_request import AuthRequest
 from lumen.models.entity import Entity
+from lumen.models.entity_manager import EntityManager, get_project_role
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.services.key_expiry import key_expires_at, key_ttl_choices, resolve_key_ttl
@@ -55,6 +56,7 @@ CLEANUP_GRACE = 300
 _LABEL_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _VERIFIER_RE = re.compile(r"[A-Za-z0-9_-]{43,128}")
 _TTL_RE = re.compile(r"[0-9]{1,10}")
+PROJECT_MAX_LENGTH = 256
 # Ambiguity-free alphabet: no I/O/0/1/L that users mistype from a terminal.
 _USER_CODE_ALPHABET = "BCDFGHJKMPQRTVWXY23456789"
 
@@ -88,6 +90,119 @@ def _parse_ttl(raw: str | None) -> int | None:
     if not _TTL_RE.fullmatch(raw):
         raise ValueError("ttl must be a whole number of seconds, 0 or more")
     return resolve_key_ttl(int(raw))
+
+
+def _parse_project(raw: str | None) -> str | None:
+    """The ``project`` request value (a project UUID or name), exactly as sent; None when absent.
+
+    Only the format is checked here: the value is resolved once a user is
+    logged in, so an anonymous request cannot probe which projects exist.
+    Raises ValueError when it is supplied but blank, longer than the column
+    allows, or contains a NUL (which PostgreSQL text cannot store).
+    """
+    if raw is None:
+        return None
+    if not raw.strip():
+        raise ValueError("project must not be blank")
+    if len(raw) > PROJECT_MAX_LENGTH:
+        raise ValueError(f"project must be at most {PROJECT_MAX_LENGTH} characters")
+    if "\x00" in raw:
+        raise ValueError("project must not contain NUL characters")
+    return raw
+
+
+def _resolve_project(raw: str) -> tuple[Entity | None, bool]:
+    """The project named by ``raw``, and whether the name was ambiguous.
+
+    A value that parses as a UUID matches ``Entity.uuid`` only; any other value
+    matches the name of project entities. Names are unique only by app check,
+    so a name that matches more than one project resolves to nothing.
+    """
+    try:
+        cond = Entity.uuid == UUID(raw)
+    except ValueError:
+        cond = Entity.name == raw
+    matches = db.session.execute(
+        select(Entity).where(Entity.entity_type == "project", cond).limit(2)
+    ).scalars().all()
+    if len(matches) > 1:
+        return None, True
+    return (matches[0] if matches else None), False
+
+
+def _access_denial(requested_project: str, ambiguous: bool = False) -> str:
+    # Built only from the value the requester sent, never from the project row,
+    # so the text reveals nothing the requester did not already know.
+    reason = (f"the approving account is not a member of project '{requested_project}', "
+              "or the project does not exist or is inactive")
+    return reason + "; use the project UUID" if ambiguous else reason
+
+
+def _project_key_denial(entity_id: int, project: Entity | None, requested_project: str,
+                        requested_name: str, lock: bool = False) -> str | None:
+    """Why ``entity_id`` may not get a key named ``requested_name`` in ``project``; None if allowed.
+
+    The project must exist and be active, and the approver must be a member
+    with any role; admin status gives no exception. A member with the user
+    role (who is not the owner) can hold one active normal key they created in
+    the project: another name is refused, the same name goes on to the
+    overwrite flow. With ``lock``, the approver's membership row is locked
+    first (as in create_project_key) so two concurrent claims cannot both pass
+    the one-key check; the lock is a no-op on SQLite.
+    """
+    if project is None:
+        return _access_denial(requested_project)
+    stmt = select(EntityManager.role).filter_by(user_entity_id=entity_id, project_entity_id=project.id)
+    if lock:
+        stmt = stmt.with_for_update()
+    role = db.session.scalar(stmt)
+    if role is None:
+        return _access_denial(requested_project)
+    if lock:
+        # Owner and active flag as of after the lock, not an earlier read. The
+        # locked membership row keeps the project from being deleted meanwhile
+        # (its delete cascades to that row), so the refresh cannot miss it.
+        db.session.refresh(project)
+    if not project.active:
+        return _access_denial(requested_project)
+    if role == "user" and project.owner_entity_id != entity_id:
+        other_key = db.session.scalar(
+            select(APIKey.id).where(
+                APIKey.entity_id == project.id,
+                APIKey.created_by_entity_id == entity_id,
+                APIKey.key_type == KEY_TYPE_NORMAL,
+                APIKey.revoked_at.is_(None),
+                APIKey.name != requested_name,
+            ).limit(1)
+        )
+        if other_key is not None:
+            return (f"members with the user role can hold one key in project '{requested_project}'; "
+                    "request it with the name of your existing key to replace it")
+    return None
+
+
+def _check_project_request(entity_id: int, requested_project: str,
+                           requested_name: str) -> tuple[Entity | None, str | None]:
+    """Resolve a requested project and apply the access rule: (project, denial reason)."""
+    project, ambiguous = _resolve_project(requested_project)
+    if ambiguous:
+        return None, _access_denial(requested_project, ambiguous=True)
+    reason = _project_key_denial(entity_id, project, requested_project, requested_name)
+    return (None, reason) if reason else (project, None)
+
+
+def _deny_request(req: AuthRequest, reason: str, from_status: str = "pending") -> bool:
+    """Set a request to denied with its reason in one guarded update; commits. False if it moved on."""
+    result = db.session.execute(
+        update(AuthRequest)
+        .where(AuthRequest.id == req.id, AuthRequest.status == from_status)
+        .values(status="denied", denial_reason=reason)
+    )
+    if result.rowcount == 0:
+        db.session.rollback()
+        return False
+    db.session.commit()
+    return True
 
 
 def _oauth_error(error: str, description: str = "", status: HTTPStatus = HTTPStatus.BAD_REQUEST):
@@ -174,6 +289,7 @@ def device_authorization():
         return _oauth_error("invalid_request", "author must be at most 128 characters")
     try:
         ttl = _parse_ttl(request.form.get("ttl"))
+        requested_project = _parse_project(request.form.get("project"))
     except ValueError as e:
         return _oauth_error("invalid_request", str(e))
 
@@ -186,6 +302,7 @@ def device_authorization():
             requested_name=name,
             author=author,
             ttl=ttl,
+            requested_project=requested_project,
             expires_at=utcnow() + timedelta(seconds=DEVICE_EXPIRY),
             device_code_hash=_token_hash(device_code),
             user_code=_gen_user_code(),
@@ -240,7 +357,13 @@ def device_page():
     ).scalar_one_or_none() if code else None
     if req is None:
         return redirect(url_for("oauth.error_page", reason="unknown_code"))
-    return _render_consent(req)
+    project = None
+    if req.requested_project:
+        project, reason = _check_project_request(g.entity_id, req.requested_project, req.requested_name)
+        if reason:
+            _deny_request(req, reason)
+            return _forbidden_page(reason)
+    return _render_consent(req, project=project)
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +382,7 @@ def authorize():
     challenge = request.args.get("code_challenge") or ""
     method = request.args.get("code_challenge_method") or ""
     ttl = None
+    requested_project = None
 
     if request.args.get("response_type") != "code":
         error = "response_type must be 'code'"
@@ -279,6 +403,7 @@ def authorize():
     else:
         try:
             ttl = _parse_ttl(request.args.get("ttl"))
+            requested_project = _parse_project(request.args.get("project"))
         except ValueError as e:
             error = str(e)
     if error:
@@ -288,12 +413,21 @@ def authorize():
         session["oauth_return_to"] = request.full_path
         return redirect(url_for("auth.landing"))
 
+    project = None
+    if requested_project:
+        # Refused before any row exists and without a redirect, like the other
+        # errors before consent.
+        project, reason = _check_project_request(g.entity_id, requested_project, name)
+        if reason:
+            return _forbidden_page(reason)
+
     req = AuthRequest(
         flow="code",
         client_id=client_id,
         requested_name=name,
         author=author,
         ttl=ttl,
+        requested_project=requested_project,
         expires_at=utcnow() + timedelta(seconds=AUTHORIZE_EXPIRY),
         redirect_uri=redirect_uri,
         code_challenge=challenge,
@@ -303,7 +437,7 @@ def authorize():
     # Keyed by the request's public UUID so a later flow in the same browser never hands its
     # state to an earlier one.
     session["oauth_consent_state"] = {"request_id": str(req.uuid), "state": state}
-    return _render_consent(req)
+    return _render_consent(req, project=project)
 
 
 @oauth_bp.route("/oauth/consent", methods=["POST"])
@@ -329,20 +463,35 @@ def consent():
                             "This request was already approved, denied, or has expired.")
 
     if action == "approve":
+        project = None
+        if req.requested_project:
+            # Again here: membership or keys can change while the page is open.
+            project, reason = _check_project_request(entity_id, req.requested_project, req.requested_name)
+            if reason:
+                _deny_request(req, reason)
+                return _forbidden_page(reason)
+            if not hmac.compare_digest(request.form.get("consent_project", ""),
+                                       _consent_project_tag(req, project)):
+                # The submitted form did not show this project for this request
+                # (the name now resolves elsewhere, or the form is stale or
+                # edited): approve only after the user has seen this one.
+                return _render_consent(
+                    req, project=project,
+                    error="The project for this request changed. Check it and approve again.",
+                )
         overwrite = request.form.get("overwrite") == "on"
         existing = db.session.execute(
-            select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
-                                 APIKey.key_type == KEY_TYPE_NORMAL, APIKey.revoked_at.is_(None))
+            _existing_keys_stmt(entity_id, project, req.requested_name)
         ).scalars().all()
         if existing and not overwrite:
-            return _render_consent(req, error='Tick "Overwrite key" to replace your existing key.')
+            return _render_consent(req, error='Tick "Overwrite key" to replace your existing key.', project=project)
         # The approver's choice from the dropdown, checked again here; a form
         # without one keeps what the request asked for (or the cap).
         try:
             ttl = _parse_ttl(request.form.get("ttl"))
             ttl = resolve_key_ttl(req.ttl if ttl is None else ttl)
         except ValueError as e:
-            return _render_consent(req, error=f"Invalid expiry: {e}.")
+            return _render_consent(req, error=f"Invalid expiry: {e}.", project=project)
 
         now = utcnow()
         extended = now + timedelta(seconds=CLAIM_WINDOW)
@@ -359,6 +508,7 @@ def consent():
             .values(
                 status="approved",
                 entity_id=entity_id,
+                project_entity_id=project.id if project is not None else None,
                 overwrite=overwrite,
                 ttl=ttl,
                 approved_at=now,
@@ -467,13 +617,19 @@ def _token_device():
             return _oauth_error("expired_token", "the request expired")
         return _oauth_error("authorization_pending", "waiting for user approval")
     if req.status == "approved":
-        req.last_polled_at = now
         if req.expires_at <= now:
+            # Guarded UPDATE, not an ORM write: the row may be gone by now
+            # (project deleted, ON DELETE CASCADE, or the janitor), and a
+            # flush of a vanished row would fail instead of answering.
+            db.session.execute(update(AuthRequest).where(AuthRequest.id == req.id).values(last_polled_at=now))
             db.session.commit()
             return _oauth_error("expired_token", "the claim window expired")
-        return _mint(req)
+        # No ORM change to the row before the claim: if the request was deleted
+        # meanwhile (its project was, ON DELETE CASCADE), an autoflush would
+        # fail on it. The claim's guarded UPDATE records the poll instead.
+        return _mint(req, polled_at=now)
     if req.status == "denied":
-        return _oauth_error("access_denied", "the user denied the request")
+        return _oauth_error("access_denied", req.denial_reason or "the user denied the request")
     return _oauth_error("invalid_grant", "already claimed")
 
 
@@ -518,12 +674,26 @@ def _pkce_s256_matches(verifier: str, challenge: str) -> bool:
     return hmac.compare_digest(computed, challenge)
 
 
-def _mint(req: AuthRequest):
+def _mint(req: AuthRequest, polled_at=None):
     """Atomically claim an approved request and mint the key (returned once)."""
+    project = None
+    if req.requested_project:
+        # Third check, before claiming, under a lock on the approver's
+        # membership row. The project is the one resolved at approval; if it
+        # was deleted since, the request row went with it (ON DELETE CASCADE).
+        project = db.session.get(Entity, req.project_entity_id) if req.project_entity_id else None
+        reason = _project_key_denial(req.entity_id, project, req.requested_project,
+                                     req.requested_name, lock=True)
+        if reason:
+            if not _deny_request(req, reason, from_status="approved"):
+                return _oauth_error("invalid_grant", "not approved (anymore)")
+            return _oauth_error("access_denied", reason)
+    key_entity_id = project.id if project is not None else req.entity_id
+
     result = db.session.execute(
         update(AuthRequest)
         .where(AuthRequest.id == req.id, AuthRequest.status == "approved")
-        .values(status="claimed")
+        .values(status="claimed", **({"last_polled_at": polled_at} if polled_at else {}))
     )
     if result.rowcount == 0:
         db.session.rollback()
@@ -532,9 +702,7 @@ def _mint(req: AuthRequest):
     # Only normal keys can be overwritten: OAuth never touches an admin or
     # monitoring key, even one with the requested name.
     existing = db.session.execute(
-        select(APIKey).where(APIKey.entity_id == req.entity_id, APIKey.name == req.requested_name,
-                             APIKey.key_type == KEY_TYPE_NORMAL, APIKey.revoked_at.is_(None))
-        .order_by(APIKey.created_at.desc(), APIKey.id.desc())
+        _existing_keys_stmt(req.entity_id, project, req.requested_name)
     ).scalars().all()
     if existing and not req.overwrite:
         db.session.rollback()
@@ -553,8 +721,9 @@ def _mint(req: AuthRequest):
         req.api_key_id = target.id
     else:
         api_key = APIKey(
-            entity_id=req.entity_id,
+            entity_id=key_entity_id,
             created_by_entity_id=req.entity_id,
+            key_type=KEY_TYPE_NORMAL,
             name=req.requested_name,
             **key_secret_fields(key),
             **provenance,
@@ -637,12 +806,37 @@ def _pop_consent_state(request_uuid: UUID) -> str | None:
     return None
 
 
-def _render_consent(req: AuthRequest, error: str | None = None):
+def _existing_keys_stmt(entity_id: int, project: Entity | None, name: str):
+    """Active normal keys named ``name`` that an OAuth approval may overwrite, newest first.
+
+    Personal requests: the approver's own keys. Project requests: keys in the
+    project that the approver created, never a teammate's same-name key. Only
+    normal keys: OAuth never touches an admin or monitoring key.
+    """
+    stmt = select(APIKey).where(APIKey.name == name, APIKey.key_type == KEY_TYPE_NORMAL,
+                                APIKey.revoked_at.is_(None))
+    if project is None:
+        stmt = stmt.where(APIKey.entity_id == entity_id)
+    else:
+        stmt = stmt.where(APIKey.entity_id == project.id, APIKey.created_by_entity_id == entity_id)
+    return stmt.order_by(APIKey.created_at.desc(), APIKey.id.desc())
+
+
+def _consent_project_tag(req: AuthRequest, project: Entity) -> str:
+    """HMAC over the request and the project a consent form shows.
+
+    The form carries it back, so consent POST approves only the project that
+    this very form displayed: a stale form, or one from before the requested
+    name moved to another project, does not match the project resolved now.
+    """
+    message = f"oauth-consent-project:{req.uuid}:{project.uuid}".encode()
+    return hmac.new(current_app.secret_key.encode(), message, hashlib.sha256).hexdigest()
+
+
+def _render_consent(req: AuthRequest, error: str | None = None, project: Entity | None = None):
     entity_id = g.entity_id
     existing_key = db.session.execute(
-        select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
-                             APIKey.key_type == KEY_TYPE_NORMAL, APIKey.revoked_at.is_(None))
-        .order_by(APIKey.created_at.desc(), APIKey.id.desc())
+        _existing_keys_stmt(entity_id, project, req.requested_name)
     ).scalars().first()
     session["oauth_consent_request_id"] = str(req.uuid)
     origin = full_uri = ""
@@ -657,7 +851,14 @@ def _render_consent(req: AuthRequest, error: str | None = None):
         error=error,
         existing_key=existing_key,
         key_ttl_choices=key_ttl_choices(req.ttl),
-        model_rows=_consent_model_rows(entity_id),
+        model_rows=_consent_model_rows(project.id if project is not None else entity_id),
+        project=project,
+        consent_project_tag=_consent_project_tag(req, project) if project is not None else None,
+        # project_consent() only lets owners and managers acknowledge for the project.
+        can_ack=project is None or get_project_role(entity_id, project.id) in ("owner", "manager"),
+        # The consent route's URL with the model name cut off; the page appends it.
+        project_consent_base=(url_for("projects.project_consent", sid=project.uuid, model_name="_")[:-1]
+                              if project is not None else None),
         destination_origin=origin,
         destination_uri=full_uri,
         verified_client=False,
@@ -675,6 +876,14 @@ def _result_page(title: str, message: str):
 def _error_page(title: str, message: str):
     return render_template("oauth_error.html", hide_nav=True,
                            error_title=title, error_message=message), HTTPStatus.BAD_REQUEST
+
+
+def _forbidden_page(reason: str):
+    return _no_store(make_response(
+        render_template("oauth_error.html", hide_nav=True,
+                        error_title="Project key not allowed", error_message=reason),
+        HTTPStatus.FORBIDDEN,
+    ))
 
 
 @oauth_bp.route("/device/error")

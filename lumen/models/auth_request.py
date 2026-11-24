@@ -67,6 +67,12 @@ class AuthRequest(db.Model):
     entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="Approving entity; set at approval")
     overwrite: Mapped[bool] = mapped_column(db.Boolean, default=False, comment="Approver agreed to replace an existing same-name key (executed at mint)")
     ttl: Mapped[Optional[int]] = mapped_column(db.BigInteger, comment="Key TTL in seconds (0 = never): as requested (null if none was), replaced by the approver's choice at approval")
+    # Project key requests: the raw value is stored at request time and only
+    # resolved once a user is logged in, so an anonymous device request cannot
+    # probe which projects exist.
+    requested_project: Mapped[Optional[str]] = mapped_column(db.String(256), comment="Raw project UUID or name the requester sent (unverified); null for a personal key request")
+    project_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE", name="fk_auth_requests_project_entity_id"), comment="Project the key is minted for, resolved from requested_project at approval; null for a personal key")
+    denial_reason: Mapped[Optional[str]] = mapped_column(db.String(512), comment="Reason returned as error_description with access_denied; null for a plain deny")
     approved_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC approval timestamp")
     # Kept after claim so a replayed authorization code can revoke the minted
     # key (RFC 6749 §4.1.2). SET NULL: deleting the key by other means must not

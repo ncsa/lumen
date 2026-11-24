@@ -4,14 +4,31 @@ from datetime import timedelta
 from http import HTTPStatus
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy import update as sa_update
 
+from lumen.blueprints.oauth import routes as oauth_routes
 from lumen.blueprints.oauth.routes import POLL_INTERVAL
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.auth_request import AuthRequest
+from lumen.models.entity import Entity
+from lumen.models.entity_manager import EntityManager
 from lumen.timeutils import utcnow
+from tests.conftest import entity_uuid, make_project
+from tests.routes.oauth_project_helpers import (
+    access_reason,
+    active_keys,
+    add_member,
+    consent_form,
+    delete_project_during_mint,
+    error_message,
+    new_user,
+    one_key_reason,
+    project_key,
+    project_with_member,
+    remove_member,
+)
 
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
@@ -67,8 +84,9 @@ def _set_last_polled(app, user_code, when):
 def _approve(app, auth_client, user_code, action="approve", overwrite=None):
     # Render the consent page first: the approve POST must reference a request
     # id that was actually shown to this session.
-    auth_client.get(f"/device?code={user_code}")
-    data = {"request_id": str(_request_row(app, user_code).uuid), "action": action}
+    page = auth_client.get(f"/device?code={user_code}")
+    # Submit the form's own hidden fields (the project tag for project requests).
+    data = {"request_id": str(_request_row(app, user_code).uuid), **consent_form(page), "action": action}
     if overwrite is not None:
         data["overwrite"] = "on" if overwrite else "off"
     return auth_client.post("/oauth/consent", data=data)
@@ -463,3 +481,355 @@ def test_normalize_user_code_rejects_wrong_length(raw):
     from lumen.blueprints.oauth.routes import _normalize_user_code
 
     assert _normalize_user_code(raw) == ""
+
+
+# ---------------------------------------------------------------------------
+# Project keys
+# ---------------------------------------------------------------------------
+
+def _issue_project(client, project, name="opencode"):
+    resp = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": name, "author": "alice", "project": project,
+    })
+    assert resp.status_code == HTTPStatus.OK, resp.get_json()
+    return resp.get_json()
+
+
+@pytest.mark.parametrize("by", ["uuid", "name"])
+def test_project_key_minted_for_member(client, auth_client, app, test_user, by):
+    project_id, project_uuid = project_with_member(app, "Alpha", test_user["id"], role="user")
+    body = _issue_project(client, project_uuid if by == "uuid" else "Alpha")
+    assert _request_row(app, body["user_code"]).requested_project == (project_uuid if by == "uuid" else "Alpha")
+
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    assert _request_row(app, body["user_code"]).project_entity_id == project_id
+    token = _poll(client, body)
+    assert token.status_code == HTTPStatus.OK
+    with app.app_context():
+        key = db.session.execute(select(APIKey)).scalars().one()
+        assert (key.entity_id, key.created_by_entity_id, key.key_type) == (project_id, test_user["id"], "normal")
+        assert key.name == "opencode"
+
+
+def test_project_too_long_rejected(client):
+    resp = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": "opencode", "project": "p" * 257,
+    })
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "invalid_request"
+
+
+def test_project_not_resolved_before_login(client, app):
+    """An anonymous device request for an unknown project looks like any other."""
+    body = _issue_project(client, "does-not-exist")
+    assert _request_row(app, body["user_code"]).status == "pending"
+    assert _poll(client, body).get_json()["error"] == "authorization_pending"
+
+
+def test_non_member_denied_and_reason_survives_project_changes(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Beta")
+    body = _issue_project(client, "Beta")
+
+    page = auth_client.get(f"/device?code={body['user_code']}")
+    assert page.status_code == HTTPStatus.FORBIDDEN
+    assert error_message(page) == access_reason("Beta")
+    row = _request_row(app, body["user_code"])
+    assert (row.status, row.denial_reason) == ("denied", access_reason("Beta"))
+
+    # Renaming the project later does not change the stored reason.
+    with app.app_context():
+        db.session.get(Entity, project_id).name = "Renamed"
+        db.session.commit()
+    token = _poll(client, body)
+    assert token.status_code == HTTPStatus.BAD_REQUEST
+    assert token.get_json() == {"error": "access_denied", "error_description": access_reason("Beta")}
+    # The denied request cannot be approved afterwards.
+    assert not active_keys(app, project_id)
+
+
+def test_project_deleted_after_denial_keeps_reason(client, auth_client, app):
+    project_id, _ = project_with_member(app, "Gamma")
+    body = _issue_project(client, "Gamma")
+    assert auth_client.get(f"/device?code={body['user_code']}").status_code == HTTPStatus.FORBIDDEN
+    with app.app_context():
+        db.session.execute(delete(EntityManager).where(EntityManager.project_entity_id == project_id))
+        db.session.execute(delete(Entity).where(Entity.id == project_id))
+        db.session.commit()
+    token = _poll(client, body)
+    assert token.get_json()["error_description"] == access_reason("Gamma")
+
+
+def test_unknown_project_looks_like_non_member(client, auth_client, app):
+    unknown = _issue_project(client, "Delta")
+    page_unknown = auth_client.get(f"/device?code={unknown['user_code']}")
+    project_with_member(app, "Delta")
+    member_less = _issue_project(client, "Delta")
+    page_non_member = auth_client.get(f"/device?code={member_less['user_code']}")
+    assert page_unknown.status_code == page_non_member.status_code == HTTPStatus.FORBIDDEN
+    assert error_message(page_unknown) == error_message(page_non_member) == access_reason("Delta")
+
+    missing_uuid = "00000000-0000-4000-8000-000000000000"
+    by_uuid = _issue_project(client, missing_uuid)
+    page = auth_client.get(f"/device?code={by_uuid['user_code']}")
+    assert page.status_code == HTTPStatus.FORBIDDEN
+    assert error_message(page) == access_reason(missing_uuid)
+
+
+def test_uuid_matches_uuid_only(client, auth_client, app, test_user):
+    """A UUID-shaped value never matches a project name."""
+    name = "11111111-1111-4111-8111-111111111111"
+    project_with_member(app, name, test_user["id"])
+    body = _issue_project(client, name)
+    assert auth_client.get(f"/device?code={body['user_code']}").status_code == HTTPStatus.FORBIDDEN
+
+
+def test_inactive_project_denied(client, auth_client, app, test_user):
+    project_with_member(app, "Epsilon", test_user["id"], active=False)
+    body = _issue_project(client, "Epsilon")
+    page = auth_client.get(f"/device?code={body['user_code']}")
+    assert page.status_code == HTTPStatus.FORBIDDEN
+    assert error_message(page) == access_reason("Epsilon")
+
+
+def test_ambiguous_project_name_denied(client, auth_client, app, test_user):
+    project_with_member(app, "Twin", test_user["id"])
+    project_with_member(app, "Twin", test_user["id"], owner_id=new_user(app, "twin-owner@example.com"))
+    body = _issue_project(client, "Twin")
+    page = auth_client.get(f"/device?code={body['user_code']}")
+    assert page.status_code == HTTPStatus.FORBIDDEN
+    assert error_message(page) == access_reason("Twin") + "; use the project UUID"
+    assert _poll(client, body).get_json()["error_description"].endswith("; use the project UUID")
+
+
+def test_non_member_admin_denied_member_admin_allowed(client, admin_client, app, admin_user):
+    project_id, project_uuid = project_with_member(app, "Zeta")
+    body = _issue_project(client, project_uuid)
+    assert admin_client.get(f"/device?code={body['user_code']}").status_code == HTTPStatus.FORBIDDEN
+
+    add_member(app, project_id, admin_user["id"], role="user")
+    body = _issue_project(client, project_uuid)
+    assert _approve(app, admin_client, body["user_code"]).status_code == HTTPStatus.OK
+    assert _poll(client, body).status_code == HTTPStatus.OK
+    assert active_keys(app, project_id) == [("opencode", admin_user["id"])]
+
+
+def test_plain_deny_of_project_request_keeps_default_text(client, auth_client, app, test_user):
+    project_with_member(app, "Eta", test_user["id"])
+    body = _issue_project(client, "Eta")
+    assert _approve(app, auth_client, body["user_code"], action="deny").status_code == HTTPStatus.OK
+    assert _poll(client, body).get_json() == {
+        "error": "access_denied", "error_description": "the user denied the request",
+    }
+
+
+def test_user_role_one_key_rule(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Theta", test_user["id"], role="user")
+    existing_id = project_key(app, project_id, test_user["id"], "opencode")
+
+    other = _issue_project(client, "Theta", name="other")
+    page = auth_client.get(f"/device?code={other['user_code']}")
+    assert page.status_code == HTTPStatus.FORBIDDEN
+    assert error_message(page) == one_key_reason("Theta")
+    assert _poll(client, other).get_json() == {
+        "error": "access_denied", "error_description": one_key_reason("Theta"),
+    }
+
+    # The same name reaches the overwrite box and replaces the key in place.
+    same = _issue_project(client, "Theta", name="opencode")
+    page = auth_client.get(f"/device?code={same['user_code']}")
+    assert page.status_code == HTTPStatus.OK
+    assert b'id="overwrite-key"' in page.data
+    assert _approve(app, auth_client, same["user_code"], overwrite=True).status_code == HTTPStatus.OK
+    assert _poll(client, same).status_code == HTTPStatus.OK
+    with app.app_context():
+        keys = db.session.execute(select(APIKey).where(APIKey.entity_id == project_id)).scalars().all()
+        assert [k.id for k in keys] == [existing_id]
+        assert keys[0].revoked_at is None and keys[0].client_id == "lumen-cli"
+
+
+@pytest.mark.parametrize("role", ["owner", "manager"])
+def test_owner_and_manager_have_no_key_limit(client, app, role):
+    member_id = new_user(app, "member@example.com")
+    if role == "owner":
+        with app.app_context():
+            project = make_project("Iota", owner_id=member_id)
+            project_id = project.id
+    else:
+        project_id, _ = project_with_member(app, "Iota", member_id, role="manager")
+    project_key(app, project_id, member_id, "first")
+    member_client = app.test_client()
+    with member_client.session_transaction() as sess:
+        sess["entity_uuid"] = entity_uuid(app, member_id)
+    body = _issue_project(client, "Iota", name="second")
+    assert _approve(app, member_client, body["user_code"]).status_code == HTTPStatus.OK
+    assert _poll(client, body).status_code == HTTPStatus.OK
+    assert active_keys(app, project_id) == [("first", member_id), ("second", member_id)]
+
+
+def test_concurrent_claims_mint_at_most_one_key(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Kappa", test_user["id"], role="user")
+    first = _issue_project(client, "Kappa", name="one")
+    second = _issue_project(client, "Kappa", name="two")
+    # Both approved while the member still holds no key.
+    assert _approve(app, auth_client, first["user_code"]).status_code == HTTPStatus.OK
+    assert _approve(app, auth_client, second["user_code"]).status_code == HTTPStatus.OK
+
+    assert _poll(client, first).status_code == HTTPStatus.OK
+    denied = _poll(client, second)
+    assert denied.status_code == HTTPStatus.BAD_REQUEST
+    assert denied.get_json() == {"error": "access_denied", "error_description": one_key_reason("Kappa")}
+    assert _request_row(app, second["user_code"]).status == "denied"
+    assert active_keys(app, project_id) == [("one", test_user["id"])]
+
+
+def test_member_removed_after_render_refused_on_consent(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Lambda", test_user["id"])
+    body = _issue_project(client, "Lambda")
+    assert auth_client.get(f"/device?code={body['user_code']}").status_code == HTTPStatus.OK
+    remove_member(app, project_id, test_user["id"])
+    resp = auth_client.post("/oauth/consent", data={
+        "request_id": str(_request_row(app, body["user_code"]).uuid), "action": "approve",
+    })
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert _request_row(app, body["user_code"]).denial_reason == access_reason("Lambda")
+    assert _poll(client, body).get_json()["error"] == "access_denied"
+
+
+def test_member_removed_after_approval_gets_access_denied(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Mu", test_user["id"])
+    body = _issue_project(client, "Mu")
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    remove_member(app, project_id, test_user["id"])
+    token = _poll(client, body)
+    assert token.status_code == HTTPStatus.BAD_REQUEST
+    assert token.get_json() == {"error": "access_denied", "error_description": access_reason("Mu")}
+    assert _request_row(app, body["user_code"]).status == "denied"
+    with app.app_context():
+        assert db.session.execute(select(APIKey)).scalars().all() == []
+
+
+def test_mint_denial_after_request_moved_on(client, auth_client, app, test_user, monkeypatch):
+    """A denial at mint loses the race to a concurrent claim: invalid_grant, no second key."""
+    project_id, _ = project_with_member(app, "Nu", test_user["id"])
+    body = _issue_project(client, "Nu")
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    remove_member(app, project_id, test_user["id"])
+    real = oauth_routes._project_key_denial
+
+    def claimed_meanwhile(*args, **kwargs):
+        db.session.execute(sa_update(AuthRequest).values(status="claimed"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(oauth_routes, "_project_key_denial", claimed_meanwhile)
+    token = _poll(client, body)
+    assert token.get_json()["error"] == "invalid_grant"
+
+
+def test_overwrite_never_replaces_teammates_key(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Xi", test_user["id"], role="manager")
+    teammate = new_user(app, "teammate@example.com")
+    add_member(app, project_id, teammate, role="user")
+    teammate_key = project_key(app, project_id, teammate, "opencode")
+
+    body = _issue_project(client, "Xi", name="opencode")
+    page = auth_client.get(f"/device?code={body['user_code']}")
+    assert page.status_code == HTTPStatus.OK
+    assert b'id="overwrite-key"' not in page.data  # the teammate's key is not offered
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    assert _poll(client, body).status_code == HTTPStatus.OK
+    assert active_keys(app, project_id) == sorted([("opencode", teammate), ("opencode", test_user["id"])])
+    with app.app_context():
+        assert db.session.get(APIKey, teammate_key).revoked_at is None
+
+
+def test_project_deactivated_after_approval_gets_access_denied(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Omicron", test_user["id"])
+    body = _issue_project(client, "Omicron")
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    with app.app_context():
+        db.session.get(Entity, project_id).active = False
+        db.session.commit()
+    assert _poll(client, body).get_json() == {"error": "access_denied", "error_description": access_reason("Omicron")}
+    assert not active_keys(app, project_id)
+
+
+@pytest.mark.parametrize("value", ["p" * 256, " Alpha ", "Name with spaces"])
+def test_project_value_stored_exactly(client, app, value):
+    body = _issue_project(client, value)
+    assert _request_row(app, body["user_code"]).requested_project == value
+
+
+@pytest.mark.parametrize("value", ["", "   ", "p" * 257, " " + "p" * 256, "a\x00b"])
+def test_project_value_rejected(client, value):
+    resp = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": "opencode", "project": value,
+    })
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "invalid_request"
+
+
+def test_consent_post_approves_only_the_project_its_form_showed(client, auth_client, app, test_user):
+    """The name moves to another project: a form that showed the old one never approves the new one,
+    even after a later render showed the new project to the same session."""
+    first_id, _ = project_with_member(app, "Rebind", test_user["id"])
+    body = _issue_project(client, "Rebind")
+    stale = consent_form(auth_client.get(f"/device?code={body['user_code']}"))
+    with app.app_context():
+        db.session.get(Entity, first_id).name = "Rebind (old)"
+        db.session.commit()
+    second_id, _ = project_with_member(app, "Rebind", test_user["id"],
+                                       owner_id=new_user(app, "rebind-owner@example.com"))
+
+    resp = auth_client.post("/oauth/consent", data={**stale, "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK
+    assert b"The project for this request changed" in resp.data
+    fresh = consent_form(resp)
+    assert fresh["consent_project"] != stale["consent_project"]
+
+    # The re-render showed the new project to this session; the old form still does not approve it,
+    # and neither does a form without the tag.
+    for form in (stale, {"request_id": stale["request_id"]}):
+        resp = auth_client.post("/oauth/consent", data={**form, "action": "approve"})
+        assert resp.status_code == HTTPStatus.OK
+        assert b"The project for this request changed" in resp.data
+    row = _request_row(app, body["user_code"])
+    assert (row.status, row.project_entity_id) == ("pending", None)
+
+    resp = auth_client.post("/oauth/consent", data={**fresh, "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK and b"Key approved" in resp.data
+    assert _request_row(app, body["user_code"]).project_entity_id == second_id
+    assert _poll(client, body).status_code == HTTPStatus.OK
+    assert active_keys(app, second_id) == [("opencode", test_user["id"])]
+    assert not active_keys(app, first_id)
+
+
+def test_expired_claim_of_a_deleted_request_is_expired_token(client, auth_client, app, test_user, monkeypatch):
+    """The approved request expired and vanished after the poll read it: a 400, not a flush error."""
+    project_with_member(app, "Rho", test_user["id"])
+    body = _issue_project(client, "Rho")
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    _set_expiry(app, body["user_code"], utcnow() - timedelta(seconds=1))
+    real_utcnow = oauth_routes.utcnow
+
+    def deleted_after_read():
+        # Called right after _token_device has loaded the request.
+        db.session.execute(delete(AuthRequest).where(AuthRequest.user_code == body["user_code"])
+                           .execution_options(synchronize_session=False))
+        return real_utcnow()
+
+    monkeypatch.setattr(oauth_routes, "utcnow", deleted_after_read)
+    resp = _poll(client, body)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "expired_token"
+
+
+def test_project_deleted_during_claim_is_a_grant_error(client, auth_client, app, test_user, monkeypatch):
+    project_id, _ = project_with_member(app, "Pi", test_user["id"])
+    body = _issue_project(client, "Pi")
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    delete_project_during_mint(monkeypatch, project_id)
+    resp = _poll(client, body)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "invalid_grant"
+    with app.app_context():
+        assert db.session.execute(select(APIKey)).scalars().all() == []

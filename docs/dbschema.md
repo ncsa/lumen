@@ -67,6 +67,9 @@ erDiagram
         bigint ttl
         datetime approved_at
         int api_key_id FK
+        string requested_project
+        int project_entity_id FK
+        string denial_reason
     }
 
     model_configs {
@@ -284,6 +287,7 @@ erDiagram
     entities |o--o{ api_keys : "created"
     entities |o--o{ api_keys : "revoked"
     entities |o--o{ auth_requests : "approves"
+    entities |o--o{ auth_requests : "project key for"
     api_keys |o--o{ auth_requests : "minted at claim"
     api_keys |o--o{ request_logs : "used by"
     entities ||--o| entity_limits : "has"
@@ -443,10 +447,14 @@ Pending or handled API-key requests created by the OAuth device flow (`/oauth/de
 | `ttl` | BigInteger | YES | Key TTL in seconds (`0` = never): the `ttl` the request asked for (null if none), replaced at approval by the approver's choice, checked against the `api.keys.ttl` cap. The minted key's `expires_at` is mint time plus this. |
 | `approved_at` | DateTime | YES | UTC approval timestamp |
 | `api_key_id` | Integer (FK → api_keys) | YES | Key minted at claim; retained to revoke on authorization-code replay. SET NULL on key delete. |
+| `requested_project` | String(256) | YES | Raw `project` value the requester sent (a project UUID or name, unverified); null for a personal key request. Resolved only once a user is logged in, so an anonymous request cannot probe which projects exist. |
+| `project_entity_id` | Integer (FK → entities) | YES | Project the key is minted for, resolved from `requested_project` at approval; null for a personal key. Foreign key `fk_auth_requests_project_entity_id`, cascades on delete. |
+| `denial_reason` | String(512) | YES | Reason the token endpoint returns as `error_description` with `access_denied`; set in the same guarded update that denies the request (project access or one-key rule), null for a plain deny. Built only from `requested_project`, so renaming or deleting the project later does not change it. |
 
 **Notes:**
 - Device flow: `device_code_hash` + `user_code` populated at creation; `auth_code_*` columns stay null. Code flow is the mirror image.
 - A claimed request whose minted key is later deleted keeps `api_key_id` null (SET NULL).
+- A project key request (`requested_project` set) mints a key with `api_keys.entity_id` = `project_entity_id` and `created_by_entity_id` = the approver (`entity_id`).
 
 ---
 

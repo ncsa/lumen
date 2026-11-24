@@ -12,7 +12,17 @@ from sqlalchemy import select
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.auth_request import AuthRequest
+from lumen.models.entity import Entity
 from lumen.timeutils import utcnow
+from tests.routes.oauth_project_helpers import (
+    access_reason,
+    consent_form,
+    delete_project_during_mint,
+    error_message,
+    new_user,
+    project_with_member,
+    remove_member,
+)
 
 REDIRECT = "https://portal.example.org/lumen/callback"
 
@@ -372,3 +382,129 @@ def test_code_tampered_consent_ttl_rejected(auth_client, app, restore_config, tt
         req = db.session.execute(select(AuthRequest)).scalar_one()
         assert req.status == "pending"
         assert req.auth_code_hash is None
+
+
+# ---------------------------------------------------------------------------
+# Project keys
+# ---------------------------------------------------------------------------
+
+def _consent_project(app, auth_client, project):
+    """authorize with ``project`` -> approve; returns (code, verifier)."""
+    url, verifier = _authorize_url(project=quote(project, safe=""))
+    page = auth_client.get(url)
+    assert page.status_code == HTTPStatus.OK
+    assert b'id="consent-project"' in page.data
+    resp = auth_client.post("/oauth/consent", data={**consent_form(page), "action": "approve"})
+    assert resp.status_code == HTTPStatus.FOUND
+    return parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0], verifier
+
+
+@pytest.mark.parametrize("by", ["uuid", "name"])
+def test_code_project_key_minted(client, auth_client, app, test_user, by):
+    project_id, project_uuid = project_with_member(app, "Code Project", test_user["id"], role="user")
+    code, verifier = _consent_project(app, auth_client, project_uuid if by == "uuid" else "Code Project")
+    assert _redeem(client, code, verifier).status_code == HTTPStatus.OK
+    with app.app_context():
+        key = db.session.execute(select(APIKey)).scalars().one()
+        assert (key.entity_id, key.created_by_entity_id) == (project_id, test_user["id"])
+
+
+def test_code_non_member_403_without_row_or_redirect(auth_client, app):
+    project_with_member(app, "Closed")
+    resp = auth_client.get(_authorize_url(project="Closed")[0])
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert "Location" not in resp.headers
+    assert error_message(resp) == access_reason("Closed")
+    with app.app_context():
+        assert db.session.execute(select(AuthRequest)).scalars().all() == []
+
+
+def test_code_non_member_admin_403(admin_client, app):
+    _, project_uuid = project_with_member(app, "Admin Closed")
+    assert admin_client.get(_authorize_url(project=project_uuid)[0]).status_code == HTTPStatus.FORBIDDEN
+
+
+def test_code_project_too_long_rejected(auth_client):
+    resp = auth_client.get(_authorize_url(project="p" * 257)[0])
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"project must be at most 256 characters" in resp.data
+
+
+def test_code_member_removed_after_approval(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Leaving", test_user["id"])
+    code, verifier = _consent_project(app, auth_client, "Leaving")
+    remove_member(app, project_id, test_user["id"])
+    resp = _redeem(client, code, verifier)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json() == {"error": "access_denied", "error_description": access_reason("Leaving")}
+    with app.app_context():
+        assert db.session.execute(select(APIKey)).scalars().all() == []
+        assert db.session.execute(select(AuthRequest)).scalars().one().status == "denied"
+
+
+def test_code_member_removed_before_consent_post(auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Leaving Early", test_user["id"])
+    assert auth_client.get(_authorize_url(project="Leaving Early")[0]).status_code == HTTPStatus.OK
+    remove_member(app, project_id, test_user["id"])
+    with app.app_context():
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
+    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert "Location" not in resp.headers
+
+
+@pytest.mark.parametrize("value", ["p" * 256, " Alpha "])
+def test_code_project_value_accepted_as_sent(auth_client, value):
+    # Valid format, unknown project: refused for access, not as an invalid request.
+    resp = auth_client.get(_authorize_url(project=quote(value, safe=""))[0])
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert error_message(resp) == access_reason(value)
+
+
+@pytest.mark.parametrize("value", ["", "   ", "p" * 257, " " + "p" * 256, "a\x00b"])
+def test_code_project_value_rejected(auth_client, app, value):
+    resp = auth_client.get(_authorize_url(project=quote(value, safe=""))[0])
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"Invalid authorization request" in resp.data
+    with app.app_context():
+        assert db.session.execute(select(AuthRequest)).scalars().all() == []
+
+
+def test_code_consent_post_approves_only_the_project_its_form_showed(client, auth_client, app, test_user):
+    first_id, _ = project_with_member(app, "Code Rebind", test_user["id"])
+    url, verifier = _authorize_url(project=quote("Code Rebind", safe=""))
+    stale = consent_form(auth_client.get(url))
+    with app.app_context():
+        db.session.get(Entity, first_id).name = "Code Rebind (old)"
+        db.session.commit()
+    second_id, _ = project_with_member(app, "Code Rebind", test_user["id"],
+                                       owner_id=new_user(app, "code-rebind-owner@example.com"))
+
+    resp = auth_client.post("/oauth/consent", data={**stale, "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK  # shown again, no redirect
+    assert b"The project for this request changed" in resp.data
+    fresh = consent_form(resp)
+
+    # A stale form submitted after the re-render still does not approve, and does not redirect.
+    resp = auth_client.post("/oauth/consent", data={**stale, "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK
+    assert "Location" not in resp.headers
+
+    resp = auth_client.post("/oauth/consent", data={**fresh, "action": "approve"})
+    assert resp.status_code == HTTPStatus.FOUND
+    code = parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0]
+    assert _redeem(client, code, verifier).status_code == HTTPStatus.OK
+    with app.app_context():
+        key = db.session.execute(select(APIKey)).scalars().one()
+        assert key.entity_id == second_id
+
+
+def test_code_project_deleted_during_redemption_is_a_grant_error(client, auth_client, app, test_user, monkeypatch):
+    project_id, _ = project_with_member(app, "Code Pi", test_user["id"])
+    code, verifier = _consent_project(app, auth_client, "Code Pi")
+    delete_project_during_mint(monkeypatch, project_id)
+    resp = _redeem(client, code, verifier)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "invalid_grant"
+    with app.app_context():
+        assert db.session.execute(select(APIKey)).scalars().all() == []

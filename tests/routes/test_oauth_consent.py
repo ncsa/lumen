@@ -3,18 +3,23 @@ import secrets
 from datetime import timedelta
 from http import HTTPStatus
 
+import bs4
 import pytest
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
+from lumen.blueprints.api import routes as api_routes
 from lumen.extensions import db
 from lumen.models.api_key import KEY_PREFIXES, KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, KEY_TYPE_NORMAL, APIKey
 from lumen.models.auth_request import AuthRequest
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
+from lumen.services import model_cache
 from lumen.services.key_expiry import expire_keys
 from lumen.timeutils import utcnow
 from tests.conftest import key_uuid
+from tests.routes.oauth_project_helpers import consent_form, project_with_member
+from tests.routes.test_api_auth import _api_allows, _capturing_openai, _CompletionResponse, _grant_unlimited_pool
 
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
@@ -469,3 +474,114 @@ def test_oauth_never_overwrites_admin_or_monitoring_key(client, auth_client, app
         assert (kept.id, kept.key_hash, kept.key_type, kept.expires_at) == before
         assert kept.revoked_at is None
         assert minted.key_type == KEY_TYPE_NORMAL and minted.key_hash == hash_api_key(new_key)
+
+
+# ---------------------------------------------------------------------------
+# Project key requests
+# ---------------------------------------------------------------------------
+
+def _issue_project(client, project, name="opencode"):
+    resp = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": name, "author": "alice", "project": project,
+    })
+    assert resp.status_code == HTTPStatus.OK
+    return resp.get_json()
+
+
+def _ack_models(app):
+    """Three models: no ack needed, ack needed (acked by the user only), ack needed (acked by nobody)."""
+    with app.app_context():
+        for name, needs_ack in (("free-model", False), ("user-acked", True), ("project-acked", True)):
+            db.session.add(ModelConfig(model_name=name, input_cost_per_million=1.0,
+                                       output_cost_per_million=1.0, needs_ack=needs_ack,
+                                       ack_message="Be good." if needs_ack else None))
+        db.session.commit()
+        return {m.model_name: m.id for m in db.session.execute(select(ModelConfig)).scalars()}
+
+
+def _row_states(page):
+    soup = bs4.BeautifulSoup(page, "html.parser")
+    return {
+        tr["data-model-name"]: (
+            " ".join(badge.get_text().split()) if (badge := tr.select_one(".model-state .badge")) else "",
+            tr.select_one(".ack-btn") is not None,
+        )
+        for tr in soup.select("#consent-models tbody tr[data-model-name]")
+    }
+
+
+def test_project_consent_page_shows_project_state(client, auth_client, app, test_user):
+    ids = _ack_models(app)
+    project_id, project_uuid = project_with_member(app, "Omega", test_user["id"], role="manager")
+    with app.app_context():
+        now = utcnow()
+        db.session.add(EntityModelConsent(entity_id=test_user["id"], model_config_id=ids["user-acked"],
+                                          consented_at=now))
+        db.session.add(EntityModelConsent(entity_id=project_id, model_config_id=ids["project-acked"],
+                                          consented_at=now))
+        db.session.commit()
+
+    body = _issue_project(client, "Omega")
+    page = auth_client.get(f"/device?code={body['user_code']}").get_data(as_text=True)
+    soup = bs4.BeautifulSoup(page, "html.parser")
+    assert " ".join(soup.select_one("#consent-project").get_text().split()) == "Key for project Omega"
+    assert soup.select_one("#consent-approved-note") is not None
+    # The project's acknowledgements decide, not the approver's.
+    assert _row_states(page) == {
+        "free-model": ("approved", False),
+        "project-acked": ("approved", False),
+        "user-acked": ("not approved: a project manager must acknowledge it", True),
+    }
+    assert f"/projects/{project_uuid}/consent/" in page
+    assert "/profile/consent/" not in page
+
+    # The manager's ack posts to the project endpoint and the row flips.
+    assert auth_client.post(f"/projects/{project_uuid}/consent/user-acked").status_code == HTTPStatus.OK
+    page = auth_client.get(f"/device?code={body['user_code']}").get_data(as_text=True)
+    assert _row_states(page)["user-acked"] == ("approved", False)
+
+
+def test_project_consent_page_user_role_sees_no_ack_button(client, auth_client, app, test_user):
+    _ack_models(app)
+    project_with_member(app, "Sigma", test_user["id"], role="user")
+    body = _issue_project(client, "Sigma")
+    page = auth_client.get(f"/device?code={body['user_code']}").get_data(as_text=True)
+    states = _row_states(page)
+    assert states["user-acked"] == ("not approved: a project manager must acknowledge it", False)
+    assert states["free-model"] == ("approved", False)
+    assert 'class="btn btn-sm btn-outline-warning ms-1 ack-btn"' not in page
+
+
+def test_personal_consent_page_unchanged(client, auth_client, app, test_user):
+    _ack_models(app)
+    body = _issue(client)
+    page = auth_client.get(f"/device?code={body['user_code']}").get_data(as_text=True)
+    assert 'id="consent-project"' not in page
+    assert "/projects/" not in page
+    assert _row_states(page)["user-acked"] == ("required", True)
+
+
+def test_project_key_with_unapproved_model_is_refused_for_it(
+    client, auth_client, app, test_user, test_model, test_model_endpoint, monkeypatch,
+):
+    """Approval does not wait for acknowledgements; the key cannot use the model until a manager acks it."""
+    _capturing_openai(monkeypatch, api_routes, lambda **kw: _CompletionResponse())
+    project_id, project_uuid = project_with_member(app, "Usage", test_user["id"], role="manager")
+    with app.app_context():
+        _grant_unlimited_pool(app, project_id)
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
+        db.session.commit()
+    model_cache.refresh(app)
+
+    body = _issue_project(client, project_uuid)
+    page = auth_client.get(f"/device?code={body['user_code']}")
+    resp = auth_client.post("/oauth/consent", data={**consent_form(page), "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK
+    token = _poll(client, body).get_json()["access_token"]
+
+    chat = client.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+                       json={"model": test_model["model_name"], "messages": [{"role": "user", "content": "hi"}]})
+    assert chat.status_code == HTTPStatus.FORBIDDEN
+    assert "consent_required" in chat.get_data(as_text=True)
+    assert auth_client.post(f"/projects/{project_uuid}/consent/{test_model['model_name']}").status_code == HTTPStatus.OK
+    assert _api_allows(client, token, test_model["model_name"], "chat") is True

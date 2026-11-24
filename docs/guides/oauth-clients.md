@@ -21,6 +21,7 @@ Best for anything without a browser callback. Follows the shape of RFC 8628 with
    | `name` | Name the user's new key will get (required) |
    | `author` | Optional free-form label shown to the approver (e.g. the OS user running the CLI) |
    | `ttl` | Optional key lifetime in whole seconds; `0` means never. See [Key expiry](#key-expiry) |
+   | `project` | Optional project UUID or exact project name: request a key for that project instead of a personal key. See [Project keys](#project-keys) |
 
    The JSON response contains `device_code`, `user_code` (`XXXX-XXXX`), `verification_uri`, `verification_uri_complete`, `expires_in` (600 s) and `interval` (5 s). Show the code and open `verification_uri_complete`; all secrets stay in POST bodies — only the short user code ever appears in a URL.
 
@@ -38,7 +39,7 @@ Best for anything without a browser callback. Follows the shape of RFC 8628 with
    | `authorization_pending` | Keep polling |
    | `slow_down` | Poll interval must grow by 5 s |
    | `expired_token` | Request older than 10 min — start over |
-   | `access_denied` | User clicked **Deny** — fail cleanly |
+   | `access_denied` | User clicked **Deny**, or a [project key](#project-keys) was refused — fail cleanly and show `error_description` |
    | `invalid_grant` | Unknown `device_code` / `client_id` mismatch, or a retry after claim |
 
    On approval you get `200 {"access_token": "sk_…", "token_type": "Bearer", "approved_by": "alice@example.edu", "expires_at": "2026-11-16T12:00:00Z"}` — store the key immediately; it is never returned again. `approved_by` tells you whose account approved, which is worth printing. Responses carry `Cache-Control: no-store`, and `/oauth/token` answers `OPTIONS` preflights with `Access-Control-Allow-Origin: *` so browser-based tools can poll it too. The `/v1` API allows cross-origin requests as well, so a browser app can use the key it gets here directly (see [CORS](api-reference.md#cors-browser-apps)).
@@ -60,7 +61,7 @@ For apps that can receive a browser redirect. Public clients only: no `client_se
        &state=<random>&code_challenge=<S256>&code_challenge_method=S256
    ```
 
-   `author` and `ttl` are optional, as in the device flow. `redirect_uri` must be absolute `https` (or `http` to a localhost port for development) with no fragment or credentials. Validation failures (including a `ttl` the server does not allow) render an error page and **never** redirect, since the destination is unverified at that point.
+   `author`, `ttl` and `project` are optional, as in the device flow. `redirect_uri` must be absolute `https` (or `http` to a localhost port for development) with no fragment or credentials. Validation failures (including a `ttl` the server does not allow) render an error page and **never** redirect, since the destination is unverified at that point.
 
 2. The user signs in (you get bounced through login and back), sees the consent page — destination origin shown prominently, models with per-model consent, replace checkbox when relevant — and approves or denies.
 
@@ -128,6 +129,26 @@ location.search ? callback() : document.getElementById("start").onclick = start;
 
 The example is deliberately naive about key custody: a page whose only job is to obtain a key should **show it once for copying and keep nothing**. If your app holds the key in browser state, remember any script running on your origin can read it too.
 
+
+## Project keys
+
+Add `project` to either request to ask for a key for a [project](../projects/projects.md) instead of a personal key. It takes the project's UUID or its exact name; a value that looks like a UUID is matched against project UUIDs only. Project names are not guaranteed to be unique: if a name matches more than one project the request is refused, so prefer the UUID. It is used exactly as sent. A blank value, a value longer than 256 characters, or one containing a NUL character fails with `invalid_request` (an error page in the authorization-code flow).
+
+The project is looked up only once the user has signed in, so the device-flow request itself never reveals whether a project exists.
+
+- **Membership:** the approving user must be a member of the project (owner, manager or user), and the project must be active. Administrators get no exception: an admin who is not a member is refused like anyone else.
+- **One key for the user role:** a member with the `user` role can hold one key in the project. If they already have one, the request is refused unless it uses the name of that key; with the same name the consent page offers to replace it, as for personal keys. Owners and managers have no limit.
+- **Ownership:** the key belongs to the project and records the approver as its creator. The replace checkbox only ever matches a key the approver created in that project, never a teammate's key with the same name.
+- **Models:** the consent page shows **Key for project …** and lists the project's models as **approved** (no acknowledgment needed, or acknowledged for the project) or **not approved: a project manager must acknowledge it**. The key can use only approved models. Owners and managers can acknowledge a model from the consent page; approving the request does not wait for it.
+
+When the rule refuses a request, the browser shows an error page with HTTP **403**, and no key is minted. The rule is checked when the consent page opens, again on approval, and once more when your app collects the key, so a member removed in between is refused too. In the device flow, the next poll of `/oauth/token` returns `400 {"error": "access_denied", "error_description": "…"}` with the reason, for example:
+
+- `the approving account is not a member of project '<project>', or the project does not exist or is inactive` (with `; use the project UUID` when the name matched more than one project)
+- `members with the user role can hold one key in project '<project>'; request it with the name of your existing key to replace it`
+
+If the name points at a different project when the user approves than when the page opened, the page is shown again with the new project and must be approved again. If the project is deleted after approval, the request goes with it, and `/oauth/token` answers `invalid_grant`.
+
+The reason repeats only the `project` value you sent. A plain **Deny** keeps the description `the user denied the request`. In the authorization-code flow, a refusal when the page opens or on approval is shown on the 403 page (there is no redirect), and a refusal at redemption returns the same `access_denied` error from `/oauth/token`.
 
 ## Key expiry
 

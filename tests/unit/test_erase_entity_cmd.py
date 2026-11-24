@@ -700,6 +700,7 @@ HANDLED = {
     ("auth_requests", "entity_id"): "_erase_dependents",
     # The key survives under the ghost, so the reference stays valid.
     ("auth_requests", "api_key_id"): "no-op",
+    ("auth_requests", "project_entity_id"): "the entity is a user, never a project",
     ("conversations", "entity_id"): "_erase_dependents",
     ("entity_balances", "entity_id"): "_erase_dependents",
     ("entity_limits", "entity_id"): "_erase_dependents",

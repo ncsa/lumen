@@ -29,6 +29,10 @@
   {% endif %}
   <dt class="col-sm-3">Key name:</dt>
   <dd class="col-sm-9">{{ req.requested_name }}</dd>
+  {% if project %}
+  <dt class="col-sm-3">Project:</dt>
+  <dd class="col-sm-9" id="consent-project">Key for project <strong>{{ project.name }}</strong></dd>
+  {% endif %}
   <dt class="col-sm-3">Server:</dt>
   <dd class="col-sm-9">{{ request.host }}</dd>
   <dt class="col-sm-3">Approving as:</dt>
@@ -53,10 +57,11 @@
 <form method="post" action="{{ url_for('oauth.consent') }}" class="mt-2">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="request_id" value="{{ req.uuid }}">
+  {% if consent_project_tag %}<input type="hidden" name="consent_project" value="{{ consent_project_tag }}">{% endif %}
 
   {% if existing_key %}
   <h2 class="h5 mt-4">Existing key</h2>
-  <p class="mb-2">You already have a key named &ldquo;{{ req.requested_name }}&rdquo;:
+  <p class="mb-2">You already have a key{% if project %} in project &ldquo;{{ project.name }}&rdquo;{% endif %} named &ldquo;{{ req.requested_name }}&rdquo;:
     <code>{{ existing_key.key_hint }}</code>
     created <span class="local-datetime" data-utc="{{ existing_key.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if existing_key.created_at else '' }}"></span>
   </p>
@@ -75,14 +80,22 @@
   {% with ttl_select_id = 'consent-key-ttl', ttl_select_name = 'ttl' %}{% include '_key_ttl_select.html' %}{% endwith %}
 
   <h2 class="h5 mt-4">Models</h2>
+  {% if project %}
+  <p id="consent-approved-note">This key can use only the project's approved models: those that need no acknowledgment, and those a project owner or manager has acknowledged.</p>
+  {% else %}
   <p>This key can use the following models:</p>
+  {% endif %}
   <div class="table-responsive mb-3">
     <table class="table table-sm align-middle mb-0" id="consent-models">
+      {% if project %}
+      <caption class="visually-hidden">Models in project {{ project.name }}, with whether each is approved for the project.</caption>
+      {% else %}
       <caption class="visually-hidden">Models this key can access, with your acknowledgment status for each.</caption>
+      {% endif %}
       <thead>
         <tr>
           <th scope="col">Model</th>
-          <th scope="col">Acknowledgment</th>
+          <th scope="col">{% if project %}Status{% else %}Acknowledgment{% endif %}</th>
         </tr>
       </thead>
       <tbody>
@@ -90,14 +103,25 @@
         <tr data-model-name="{{ m.name }}">
           <td>{{ m.name }}</td>
           <td class="model-state">
-            {% if m.accepted %}
+            {% if project %}
+            {% if not m.requires_action %}
+            <span class="badge rounded-pill bg-success">approved</span>
+            {% if m.accepted and m.accepted_at %}
+            <span class="small text-muted ms-1">acknowledged <span class="local-datetime" data-utc="{{ m.accepted_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></span>
+            {% endif %}
+            {% else %}
+            <span class="badge rounded-pill bg-warning text-dark">not approved: a project manager must acknowledge it</span>
+            {% endif %}
+            {% elif m.accepted %}
             <span class="badge rounded-pill bg-success">acknowledged</span>
             {% if m.accepted_at %}
             <span class="local-datetime ms-1" data-utc="{{ m.accepted_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
             {% endif %}
             {% endif %}
-            {% if m.requires_action %}
+            {% if m.requires_action and not project %}
             <span class="badge rounded-pill bg-warning text-dark">required</span>
+            {% endif %}
+            {% if m.requires_action and can_ack %}
             <button type="button" class="btn btn-sm btn-outline-warning ms-1 ack-btn"
                     data-name="{{ m.name }}"
                     data-notice="{{ m.notice or '' }}"
@@ -147,18 +171,21 @@
   // Reuse the shared ack dialog; on success the row flips to "acknowledged"
   // in place (same pills as the Models page) and focus moves to the next
   // pending Acknowledge button, or Approve when none remain.
+  // For a project key the dialog posts to the project's consent endpoint, and
+  // the row flips to "approved" instead.
+  const projectKey = {{ 'true' if project else 'false' }};
   const openAckModal = initAckConsent(function (modelName) {
     const row = document.querySelector('#consent-models tbody [data-model-name="' + CSS.escape(modelName) + '"]');
     if (!row) return;
     const cell = row.querySelector('.model-state');
     cell.querySelectorAll('.ack-btn, .badge.bg-warning').forEach(el => el.remove());
     cell.insertAdjacentHTML('afterbegin',
-      '<span class="badge rounded-pill bg-success">acknowledged</span>' +
+      '<span class="badge rounded-pill bg-success">' + (projectKey ? 'approved' : 'acknowledged') + '</span>' +
       '<span class="local-datetime ms-1" data-utc="' + new Date().toISOString().slice(0, 19) + 'Z"></span>');
     window.renderLocalDatetimes(cell);
     const next = document.querySelector('#consent-models .ack-btn');
     (next || document.getElementById('approve-btn')).focus();
-  });
+  }{% if project %}, name => {{ project_consent_base | tojson }} + encodeURIComponent(name){% endif %});
   document.querySelectorAll('.ack-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       openAckModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null);
