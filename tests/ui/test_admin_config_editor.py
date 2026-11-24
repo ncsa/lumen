@@ -89,6 +89,30 @@ def test_editor_saves_key_ttl_with_other_api_settings(editor):
     }
 
 
+@pytest.mark.parametrize("ttl_input, expected_ttl", [(None, None), ("", None), ("12h", "12h")])
+def test_editor_save_keeps_api_keys_it_has_no_field_for(editor, ttl_input, expected_ttl):
+    """Saving the API tab must not drop max_ttl and friends, which would lift a finite cap."""
+    page, cfg, posted = editor
+    new_keys = {"max_ttl": "30d", "max_admin_ttl": "1d", "max_monitor_ttl": "30d", "default_ttl": "7d"}
+    data = yaml.safe_load(cfg.read_text())
+    data["api"]["keys"] = {**new_keys, "ttl": "8w"}
+    cfg.write_text(yaml.safe_dump(data))
+    _open_api_section(page)
+
+    if ttl_input is not None:
+        page.fill("#keys-ttl", ttl_input)
+    else:
+        expected_ttl = "8w"  # untouched legacy field is saved as loaded
+    page.click("#btn-save")
+    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+
+    expected = dict(new_keys)
+    if expected_ttl is not None:
+        expected["ttl"] = expected_ttl
+    assert posted[0]["api"]["keys"] == expected
+    assert yaml.safe_load(cfg.read_text())["api"]["keys"] == expected
+
+
 def test_editor_refuses_to_save_malformed_key_ttl(editor):
     page, cfg, posted = editor
     _open_api_section(page)

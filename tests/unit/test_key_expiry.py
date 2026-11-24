@@ -1,4 +1,4 @@
-"""API key expiry: api.keys.ttl parsing, resolve_key_ttl, and the expirer."""
+"""API key expiry: api.keys TTL parsing, resolve_key_ttl per key type, and the expirer."""
 import logging
 from datetime import timedelta
 from types import SimpleNamespace
@@ -43,9 +43,67 @@ def test_parse_key_ttl_rejects(value):
 @pytest.mark.parametrize("ttl, seconds", [(0, 0), ("0", 0), ("12h", 12 * 3600), ("30d", 30 * DAY), ("8w", 56 * DAY)])
 def test_hot_config_sets_key_ttl(app, restore_config, caplog, ttl, seconds):
     with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
-        apply_hot_config(app, {"api": {"keys": {"ttl": ttl}}})
+        apply_hot_config(app, {"api": {"keys": {"max_ttl": ttl}}})
     assert app.config["KEY_TTL"] == seconds
-    assert "api.keys.ttl" not in caplog.text
+    assert caplog.text == ""
+
+
+def test_hot_config_legacy_ttl_is_max_ttl_with_deprecation_warning(app, restore_config, caplog):
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        apply_hot_config(app, {"api": {"keys": {"ttl": "30d"}}})
+    assert app.config["KEY_TTL"] == 30 * DAY
+    assert "api.keys.ttl is deprecated" in caplog.text
+    assert "api.keys.max_ttl" in caplog.text
+
+
+def test_hot_config_max_ttl_wins_over_legacy_ttl(app, restore_config, caplog):
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        apply_hot_config(app, {"api": {"keys": {"ttl": "30d", "max_ttl": "90d"}}})
+    assert app.config["KEY_TTL"] == 90 * DAY
+    assert "api.keys.ttl is deprecated and ignored" in caplog.text
+
+
+def test_hot_config_sets_per_type_and_default_ttl(app, restore_config, caplog):
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        apply_hot_config(app, {"api": {"keys": {"max_admin_ttl": "1d", "max_monitor_ttl": "30d",
+                                                "default_ttl": "2w"}}})
+    assert app.config["KEY_MAX_ADMIN_TTL"] == DAY
+    assert app.config["KEY_MAX_MONITOR_TTL"] == 30 * DAY
+    assert app.config["KEY_DEFAULT_TTL"] == 14 * DAY
+    assert caplog.text == ""
+
+
+@pytest.mark.parametrize("keys, key_type, expected", [
+    # A supported duration above the maximum loads without a warning and is lowered at use.
+    ({"max_ttl": "90d", "default_ttl": "365d"}, KEY_TYPE_NORMAL, 90 * DAY),
+    ({"default_ttl": "30d"}, KEY_TYPE_ADMIN, 7 * DAY),
+    ({"max_monitor_ttl": "1w", "default_ttl": "4w"}, KEY_TYPE_MONITORING, 7 * DAY),
+])
+def test_loaded_default_ttl_is_lowered_to_the_max(app, restore_config, caplog, keys, key_type, expected):
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        apply_hot_config(app, {"api": {"keys": keys}})
+    assert caplog.text == ""
+    assert app.config["KEY_DEFAULT_TTL"] == parse_key_ttl(keys["default_ttl"])
+    with app.app_context():
+        assert resolve_key_ttl(None, key_type) == expected
+
+
+def test_hot_config_default_ttl_zero_is_never(app, restore_config):
+    apply_hot_config(app, {"api": {"keys": {"default_ttl": 0}}})
+    assert app.config["KEY_DEFAULT_TTL"] == 0
+
+
+@pytest.mark.parametrize("name, unset", [
+    ("max_ttl", 0), ("max_admin_ttl", ADMIN_KEY_MAX_TTL), ("max_monitor_ttl", 0), ("default_ttl", None),
+])
+def test_hot_config_invalid_per_type_ttl_warns_and_falls_back(app, restore_config, caplog, name, unset):
+    config_name = {"max_ttl": "KEY_TTL", "max_admin_ttl": "KEY_MAX_ADMIN_TTL",
+                   "max_monitor_ttl": "KEY_MAX_MONITOR_TTL", "default_ttl": "KEY_DEFAULT_TTL"}[name]
+    app.config[config_name] = 99
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        apply_hot_config(app, {"api": {"keys": {name: "garbage"}}})
+    assert app.config[config_name] == unset
+    assert f"api.keys.{name} must be 0 or a duration" in caplog.text
 
 
 def test_parse_key_ttl_accepts_up_to_100_years():
@@ -65,7 +123,10 @@ def test_hot_config_absent_ttl_is_zero_without_warning(app, restore_config, capl
     with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
         apply_hot_config(app, {})
     assert app.config["KEY_TTL"] == 0
-    assert "api.keys.ttl" not in caplog.text
+    assert app.config["KEY_MAX_ADMIN_TTL"] == ADMIN_KEY_MAX_TTL
+    assert app.config["KEY_MAX_MONITOR_TTL"] == 0
+    assert app.config["KEY_DEFAULT_TTL"] is None
+    assert "api.keys" not in caplog.text
 
 
 @pytest.mark.parametrize("api", ["oops", ["keys"], {"keys": "oops"}])
@@ -76,11 +137,11 @@ def test_hot_config_malformed_api_section_is_zero(app, restore_config, api):
 
 
 def test_hot_reload_updates_key_ttl(app, restore_config):
-    apply_hot_config(app, {"api": {"keys": {"ttl": "30d"}}})
-    assert app.config["KEY_TTL"] == 30 * DAY
-    apply_hot_config(app, {"api": {"keys": {"ttl": "12h"}}})
-    assert app.config["KEY_TTL"] == 12 * 3600
-    apply_hot_config(app, {"api": {"keys": {"ttl": "0"}}})
+    apply_hot_config(app, {"api": {"keys": {"max_ttl": "30d", "default_ttl": "1d"}}})
+    assert (app.config["KEY_TTL"], app.config["KEY_DEFAULT_TTL"]) == (30 * DAY, DAY)
+    apply_hot_config(app, {"api": {"keys": {"max_ttl": "12h"}}})
+    assert (app.config["KEY_TTL"], app.config["KEY_DEFAULT_TTL"]) == (12 * 3600, None)
+    apply_hot_config(app, {"api": {"keys": {"max_ttl": "0"}}})
     assert app.config["KEY_TTL"] == 0
 
 
@@ -88,15 +149,26 @@ def _valid_config(**api):
     return {"version": 3, "models": [], "api": api}
 
 
+TTL_SETTINGS = ["ttl", "max_ttl", "max_admin_ttl", "max_monitor_ttl", "default_ttl"]
+
+
+@pytest.mark.parametrize("name", TTL_SETTINGS)
 @pytest.mark.parametrize("ttl", ["abc", "-1d", "", None, "30", 5, "999999999999999999999w"])
-def test_validate_config_structure_rejects_bad_ttl(ttl):
-    errors = validate_config_structure(_valid_config(keys={"ttl": ttl}))
-    assert any("api.keys.ttl" in e for e in errors)
+def test_validate_config_structure_rejects_bad_ttl(name, ttl):
+    errors = validate_config_structure(_valid_config(keys={name: ttl}))
+    assert errors == [f"api.keys.{name} must be 0 or a duration such as 12h, 30d or 8w"]
 
 
+@pytest.mark.parametrize("name", TTL_SETTINGS)
 @pytest.mark.parametrize("ttl", [0, "0", "12h", "30d", "8w"])
-def test_validate_config_structure_accepts_good_ttl(ttl):
-    assert validate_config_structure(_valid_config(keys={"ttl": ttl})) == []
+def test_validate_config_structure_accepts_good_ttl(name, ttl):
+    assert validate_config_structure(_valid_config(keys={name: ttl})) == []
+
+
+def test_validate_config_structure_has_no_pair_checks():
+    """A default larger than a maximum is lowered at use, never rejected."""
+    keys = {"max_ttl": "1d", "max_admin_ttl": "1h", "max_monitor_ttl": "1d", "default_ttl": 0, "ttl": "1w"}
+    assert validate_config_structure(_valid_config(keys=keys)) == []
 
 
 def test_validate_config_structure_accepts_missing_ttl():
@@ -404,64 +476,122 @@ def test_admin_key_max_ttl_is_one_week():
     assert ADMIN_KEY_MAX_TTL == WEEK
 
 
-@pytest.mark.parametrize("key_type, cap, requested, expected", [
-    (KEY_TYPE_ADMIN, 0, None, WEEK),           # default: the longest allowed
-    (KEY_TYPE_ADMIN, 30 * DAY, None, WEEK),
-    (KEY_TYPE_ADMIN, DAY, None, DAY),          # a shorter cap wins
-    (KEY_TYPE_ADMIN, 0, WEEK, WEEK),
-    (KEY_TYPE_ADMIN, 0, 3600, 3600),
-    (KEY_TYPE_MONITORING, 0, None, 0),         # default: never
-    (KEY_TYPE_MONITORING, DAY, None, 0),       # the cap does not apply
-    (KEY_TYPE_MONITORING, DAY, 0, 0),
-    (KEY_TYPE_MONITORING, DAY, 365 * DAY, 365 * DAY),
-    (KEY_TYPE_MONITORING, DAY, MAX_KEY_TTL, MAX_KEY_TTL),
-    (KEY_TYPE_NORMAL, DAY, None, DAY),         # as before
-    (KEY_TYPE_NORMAL, 0, None, 0),
+def _limits(app, max_ttl=0, max_admin=ADMIN_KEY_MAX_TTL, max_monitor=0, default=None):
+    app.config.update(KEY_TTL=max_ttl, KEY_MAX_ADMIN_TTL=max_admin, KEY_MAX_MONITOR_TTL=max_monitor,
+                      KEY_DEFAULT_TTL=default)
+
+
+@pytest.mark.parametrize("key_type, limits, requested, expected", [
+    # Nothing set: normal and monitoring never expire by default, admin keys get a week.
+    (KEY_TYPE_NORMAL, {}, None, 0),
+    (KEY_TYPE_ADMIN, {}, None, WEEK),
+    (KEY_TYPE_MONITORING, {}, None, 0),
+    (KEY_TYPE_ADMIN, {}, WEEK, WEEK),
+    (KEY_TYPE_ADMIN, {}, 3600, 3600),
+    # Each type follows only its own maximum.
+    (KEY_TYPE_NORMAL, {"max_ttl": DAY}, None, DAY),
+    (KEY_TYPE_ADMIN, {"max_ttl": DAY}, None, WEEK),
+    (KEY_TYPE_ADMIN, {"max_ttl": DAY}, WEEK, WEEK),
+    (KEY_TYPE_MONITORING, {"max_ttl": DAY}, None, 0),
+    (KEY_TYPE_MONITORING, {"max_ttl": DAY}, 0, 0),
+    (KEY_TYPE_MONITORING, {"max_ttl": DAY}, 365 * DAY, 365 * DAY),
+    (KEY_TYPE_MONITORING, {}, MAX_KEY_TTL, MAX_KEY_TTL),
+    (KEY_TYPE_ADMIN, {"max_admin": DAY}, None, DAY),
+    (KEY_TYPE_ADMIN, {"max_admin": 0}, None, 0),
+    (KEY_TYPE_ADMIN, {"max_admin": 0}, 0, 0),
+    (KEY_TYPE_ADMIN, {"max_admin": 0}, 365 * DAY, 365 * DAY),
+    (KEY_TYPE_MONITORING, {"max_monitor": 30 * DAY}, None, 30 * DAY),
+    (KEY_TYPE_MONITORING, {"max_monitor": 30 * DAY}, DAY, DAY),
+    # default_ttl 30d with the rest unset: 30 days, admin lowered to its week.
+    (KEY_TYPE_NORMAL, {"default": 30 * DAY}, None, 30 * DAY),
+    (KEY_TYPE_NORMAL, {"default": 30 * DAY}, 0, 0),
+    (KEY_TYPE_MONITORING, {"default": 30 * DAY}, None, 30 * DAY),
+    (KEY_TYPE_MONITORING, {"default": 30 * DAY}, 0, 0),
+    (KEY_TYPE_ADMIN, {"default": 30 * DAY}, None, WEEK),
+    (KEY_TYPE_ADMIN, {"default": DAY}, None, DAY),
+    # A default larger than the maximum is lowered to it.
+    (KEY_TYPE_NORMAL, {"max_ttl": 90 * DAY, "default": 365 * DAY}, None, 90 * DAY),
+    (KEY_TYPE_MONITORING, {"max_monitor": DAY, "default": 30 * DAY}, None, DAY),
+    # A default of never counts as larger than any finite maximum.
+    (KEY_TYPE_NORMAL, {"max_ttl": 30 * DAY, "default": 0}, None, 30 * DAY),
+    (KEY_TYPE_ADMIN, {"default": 0}, None, WEEK),
+    (KEY_TYPE_NORMAL, {"default": 0}, None, 0),
+    (KEY_TYPE_ADMIN, {"max_admin": 0, "default": 0}, None, 0),
 ])
-def test_resolve_key_ttl_per_type(app, restore_config, key_type, cap, requested, expected):
-    app.config["KEY_TTL"] = cap
+def test_resolve_key_ttl_per_type(app, restore_config, key_type, limits, requested, expected):
+    _limits(app, **limits)
     with app.app_context():
         assert resolve_key_ttl(requested, key_type) == expected
 
 
-@pytest.mark.parametrize("key_type, cap, requested, message", [
-    (KEY_TYPE_ADMIN, 0, 0, "admin keys must expire"),
-    (KEY_TYPE_ADMIN, 0, WEEK + 1, "cannot exceed 604800"),
-    (KEY_TYPE_ADMIN, DAY, DAY + 1, "cannot exceed 86400"),
-    (KEY_TYPE_ADMIN, 30 * DAY, 30 * DAY, "cannot exceed 604800"),
-    (KEY_TYPE_MONITORING, 0, MAX_KEY_TTL + 1, "cannot exceed"),
-    (KEY_TYPE_MONITORING, 0, -1, "whole number"),
-    (KEY_TYPE_NORMAL, DAY, 0, "keys must expire"),
+@pytest.mark.parametrize("key_type, limits, requested, message", [
+    (KEY_TYPE_ADMIN, {}, 0, "admin keys must expire"),
+    (KEY_TYPE_ADMIN, {}, WEEK + 1, "cannot exceed 604800"),
+    (KEY_TYPE_ADMIN, {"max_ttl": 30 * DAY}, 30 * DAY, "cannot exceed 604800"),
+    (KEY_TYPE_ADMIN, {"max_admin": DAY}, DAY + 1, "cannot exceed 86400"),
+    (KEY_TYPE_ADMIN, {"default": 30 * DAY}, 30 * DAY, "cannot exceed 604800"),
+    (KEY_TYPE_MONITORING, {}, MAX_KEY_TTL + 1, "cannot exceed"),
+    (KEY_TYPE_MONITORING, {}, -1, "whole number"),
+    (KEY_TYPE_MONITORING, {"max_monitor": 30 * DAY}, 0, "keys must expire"),
+    (KEY_TYPE_MONITORING, {"max_monitor": 30 * DAY}, 30 * DAY + 1, "cannot exceed 2592000"),
+    (KEY_TYPE_NORMAL, {"max_ttl": DAY}, 0, "keys must expire"),
+    (KEY_TYPE_NORMAL, {"max_ttl": 90 * DAY, "default": 365 * DAY}, 365 * DAY, "cannot exceed 7776000"),
 ])
-def test_resolve_key_ttl_per_type_rejected(app, restore_config, key_type, cap, requested, message):
-    app.config["KEY_TTL"] = cap
+def test_resolve_key_ttl_per_type_rejected(app, restore_config, key_type, limits, requested, message):
+    _limits(app, **limits)
     with app.app_context():
         with pytest.raises(ValueError, match=message):
             resolve_key_ttl(requested, key_type)
 
 
-@pytest.mark.parametrize("cap, expected", [
-    (0, [(DAY, "1 day", False), (WEEK, "7 days", True)]),
-    (30 * DAY, [(DAY, "1 day", False), (WEEK, "7 days", True)]),
-    (DAY, [(DAY, "1 day", True)]),
-    (2 * DAY, [(DAY, "1 day", False), (2 * DAY, "2 days", True)]),
+@pytest.mark.parametrize("limits, expected", [
+    ({}, [(DAY, "1 day", False), (WEEK, "7 days", True)]),
+    ({"max_ttl": 30 * DAY}, [(DAY, "1 day", False), (WEEK, "7 days", True)]),
+    ({"max_ttl": DAY}, [(DAY, "1 day", False), (WEEK, "7 days", True)]),
+    ({"max_admin": DAY}, [(DAY, "1 day", True)]),
+    ({"max_admin": 2 * DAY}, [(DAY, "1 day", False), (2 * DAY, "2 days", True)]),
+    ({"default": DAY}, [(DAY, "1 day", True), (WEEK, "7 days", False)]),
+    ({"max_admin": 0}, [(s, label, False) for s, label in KEY_TTL_PRESETS] + [(0, "Never", True)]),
+    ({"max_admin": 0, "default": 30 * DAY},
+     [(s, label, s == 30 * DAY) for s, label in KEY_TTL_PRESETS] + [(0, "Never", False)]),
 ])
-def test_key_ttl_choices_admin(app, restore_config, cap, expected):
-    app.config["KEY_TTL"] = cap
+def test_key_ttl_choices_admin(app, restore_config, limits, expected):
+    _limits(app, **limits)
     with app.app_context():
         assert key_ttl_choices(key_type=KEY_TYPE_ADMIN) == expected
 
 
 @pytest.mark.parametrize("cap", [0, DAY])
-def test_key_ttl_choices_monitoring_ignores_cap(app, restore_config, cap):
-    app.config["KEY_TTL"] = cap
+def test_key_ttl_choices_monitoring_ignores_the_normal_cap(app, restore_config, cap):
+    _limits(app, max_ttl=cap)
     with app.app_context():
         assert key_ttl_choices(key_type=KEY_TYPE_MONITORING) == (
             [(s, label, False) for s, label in KEY_TTL_PRESETS] + [(0, "Never", True)])
 
 
+def test_key_ttl_choices_monitoring_with_a_max_offers_no_never(app, restore_config):
+    _limits(app, max_monitor=30 * DAY)
+    with app.app_context():
+        assert key_ttl_choices(key_type=KEY_TYPE_MONITORING) == [
+            (DAY, "1 day", False), (WEEK, "7 days", False), (30 * DAY, "30 days", True)]
+
+
+@pytest.mark.parametrize("key_type", [KEY_TYPE_NORMAL, KEY_TYPE_MONITORING])
+def test_key_ttl_choices_default_ttl_preselected_and_never_offered(app, restore_config, key_type):
+    _limits(app, default=30 * DAY)
+    with app.app_context():
+        assert key_ttl_choices(key_type=key_type) == (
+            [(s, label, s == 30 * DAY) for s, label in KEY_TTL_PRESETS] + [(0, "Never", False)])
+
+
+def test_key_ttl_choices_default_lowered_to_max(app, restore_config):
+    _limits(app, max_ttl=90 * DAY, default=365 * DAY)
+    with app.app_context():
+        assert key_ttl_choices()[-1] == (90 * DAY, "90 days", True)
+
+
 def test_key_ttl_choices_admin_selected(app, restore_config):
-    app.config["KEY_TTL"] = 0
+    _limits(app)
     with app.app_context():
         assert key_ttl_choices(DAY, KEY_TYPE_ADMIN) == [(DAY, "1 day", True), (WEEK, "7 days", False)]
         # Not allowed for an admin key: falls back to the default.

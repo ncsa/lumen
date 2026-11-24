@@ -963,6 +963,24 @@ def test_create_key_expires_at_from_cap(app, managed_auth_client, managed_projec
         assert expires_at is None
 
 
+@pytest.mark.parametrize("cap, default, expected", [
+    (0, 30 * 86400, 30 * 86400),
+    (7 * 86400, 30 * 86400, 7 * 86400),   # lowered to max_ttl
+])
+def test_create_key_without_ttl_gets_default_ttl(app, managed_auth_client, managed_project, restore_config,
+                                                 cap, default, expected):
+    app.config["KEY_TTL"] = cap
+    app.config["KEY_DEFAULT_TTL"] = default
+    resp = managed_auth_client.post(
+        f"/projects/{managed_project['uuid']}/keys",
+        json={"name": "ttl", "key": "sk_ttl000000000000000000key_default"},
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        expires_at = key_by_public_id(resp.get_json()["id"]).expires_at
+    assert abs(expires_at - (utcnow() + timedelta(seconds=expected))) < timedelta(minutes=1)
+
+
 @pytest.mark.parametrize("cap, ttl, expected", [
     (30 * 86400, None, 30 * 86400),
     (30 * 86400, 86400, 86400),

@@ -10,7 +10,7 @@ from markupsafe import Markup
 
 from lumen.commands import model_alias_config_errors, sync_models_from_yaml
 from lumen.services import model_cache
-from lumen.services.key_expiry import parse_key_ttl
+from lumen.services.key_expiry import ADMIN_KEY_MAX_TTL, parse_key_ttl
 from lumen.services.stats_fold import DEFAULT_FOLD_INTERVAL, DEFAULT_FOLD_LAG
 
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
@@ -106,11 +106,13 @@ def validate_config_structure(data) -> list:
         errors.append("version: 3 is required")
     errors.extend(removed_config_key_errors(data))
     keys_cfg = _resolve_path(data, ("api", "keys"))
-    if isinstance(keys_cfg, dict) and "ttl" in keys_cfg:
-        try:
-            parse_key_ttl(keys_cfg["ttl"])
-        except ValueError:
-            errors.append("api.keys.ttl must be 0 or a duration such as 12h, 30d or 8w")
+    if isinstance(keys_cfg, dict):
+        for name in KEY_TTL_SETTINGS:
+            if name in keys_cfg:
+                try:
+                    parse_key_ttl(keys_cfg[name])
+                except ValueError:
+                    errors.append(f"api.keys.{name} must be 0 or a duration such as 12h, 30d or 8w")
     stats_cfg = data.get("stats")
     if stats_cfg is not None:
         if not isinstance(stats_cfg, dict):
@@ -245,22 +247,33 @@ def _non_negative_int(value, default: int, key: str) -> int:
     return parsed
 
 
-def _key_ttl(keys_cfg: dict) -> int:
-    """``api.keys.ttl`` in seconds, or 0 (keys never expire) with a warning if invalid.
+# api.keys TTL settings, each 0 or <n>h|d|w; ttl is the deprecated fallback for max_ttl.
+KEY_TTL_SETTINGS = ("ttl", "max_ttl", "max_admin_ttl", "max_monitor_ttl", "default_ttl")
 
-    Absent means 0 silently; a present but blank, negative or malformed value warns.
-    """
-    if "ttl" not in keys_cfg:
-        return 0
+
+def _key_ttl(keys_cfg: dict, name: str, unset):
+    """``api.keys.<name>`` in seconds, or ``unset`` when absent, or with a warning when invalid."""
+    if name not in keys_cfg:
+        return unset
     try:
-        return parse_key_ttl(keys_cfg["ttl"])
+        return parse_key_ttl(keys_cfg[name])
     except ValueError:
         logger.warning(
-            "config.yaml: api.keys.ttl must be 0 or a duration such as 12h, 30d or 8w, "
-            "got %r — using 0 (keys never expire)",
-            keys_cfg["ttl"],
+            "config.yaml: api.keys.%s must be 0 or a duration such as 12h, 30d or 8w, got %r — using %s",
+            name, keys_cfg[name], "no value" if unset is None else unset,
         )
-        return 0
+        return unset
+
+
+def _key_max_ttl(keys_cfg: dict) -> int:
+    """``api.keys.max_ttl`` in seconds (0 = no limit), falling back to the deprecated ``api.keys.ttl``."""
+    if "max_ttl" in keys_cfg:
+        if "ttl" in keys_cfg:
+            logger.warning("config.yaml: api.keys.ttl is deprecated and ignored because api.keys.max_ttl is set.")
+        return _key_ttl(keys_cfg, "max_ttl", 0)
+    if "ttl" in keys_cfg:
+        logger.warning("config.yaml: api.keys.ttl is deprecated and removed in 2.7; use api.keys.max_ttl.")
+    return _key_ttl(keys_cfg, "ttl", 0)
 
 
 def apply_hot_config(app, yaml_data: dict):
@@ -348,10 +361,15 @@ def apply_hot_config(app, yaml_data: dict):
         stats_cfg.get("fold_interval"), DEFAULT_FOLD_INTERVAL, "stats.fold_interval")
     app.config["STATS_FOLD_LAG"] = _positive_seconds(stats_cfg.get("fold_lag"), DEFAULT_FOLD_LAG, "stats.fold_lag")
 
-    # Max and default API key lifetime; fixed into each key's expires_at when it is created.
+    # Max API key lifetime per key type and the default lifetime (see key_expiry);
+    # fixed into each key's expires_at when it is created.
     api_cfg = yaml_data.get("api")
     keys_cfg = (api_cfg.get("keys") if isinstance(api_cfg, dict) else None) or {}
-    app.config["KEY_TTL"] = _key_ttl(keys_cfg if isinstance(keys_cfg, dict) else {})
+    keys_cfg = keys_cfg if isinstance(keys_cfg, dict) else {}
+    app.config["KEY_TTL"] = _key_max_ttl(keys_cfg)
+    app.config["KEY_MAX_ADMIN_TTL"] = _key_ttl(keys_cfg, "max_admin_ttl", ADMIN_KEY_MAX_TTL)
+    app.config["KEY_MAX_MONITOR_TTL"] = _key_ttl(keys_cfg, "max_monitor_ttl", 0)
+    app.config["KEY_DEFAULT_TTL"] = _key_ttl(keys_cfg, "default_ttl", None)
 
     # api_key_required refuses non-ASCII bearer tokens, so such a monitor token
     # can never match. Never log the value: it is a credential.
