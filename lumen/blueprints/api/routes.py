@@ -147,11 +147,6 @@ def _api_limit():
     return resolve_chat_limit()
 
 
-# Endpoint categories with a per-key bucket of their own, beside the generation
-# bucket (scope "api"). Each reads ``rate_limiting.<category>``.
-_LIMIT_CATEGORIES = ("embedding", "audio")
-
-
 def _category_limit(category: str) -> str:
     """The rate limit for ``category``: its own key, else the chat limit.
 
