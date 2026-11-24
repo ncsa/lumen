@@ -12,6 +12,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
+- Profile lists admin and monitoring keys in their own table with purpose, created, last used, expiry and use count; each use of these keys is now counted. (#759)
 - Embedding models always have an output price of 0: the config editor locks the field, and the models page and the model detail page show `—`. (#741)
 
 ## [2.5.0] - 2026-11-21
