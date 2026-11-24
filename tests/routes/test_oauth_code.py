@@ -13,6 +13,7 @@ from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.auth_request import AuthRequest
 from lumen.timeutils import utcnow
+from tests.routes.oauth_project_helpers import access_reason, error_message, project_with_member, remove_member
 
 REDIRECT = "https://portal.example.org/lumen/callback"
 
@@ -372,3 +373,74 @@ def test_code_tampered_consent_ttl_rejected(auth_client, app, restore_config, tt
         req = db.session.execute(select(AuthRequest)).scalar_one()
         assert req.status == "pending"
         assert req.auth_code_hash is None
+
+
+# ---------------------------------------------------------------------------
+# Project keys
+# ---------------------------------------------------------------------------
+
+def _consent_project(app, auth_client, project):
+    """authorize with ``project`` -> approve; returns (code, verifier)."""
+    url, verifier = _authorize_url(project=quote(project, safe=""))
+    page = auth_client.get(url)
+    assert page.status_code == HTTPStatus.OK
+    assert b'id="consent-project"' in page.data
+    with app.app_context():
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
+    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    assert resp.status_code == HTTPStatus.FOUND
+    return parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0], verifier
+
+
+@pytest.mark.parametrize("by", ["uuid", "name"])
+def test_code_project_key_minted(client, auth_client, app, test_user, by):
+    project_id, project_uuid = project_with_member(app, "Code Project", test_user["id"], role="user")
+    code, verifier = _consent_project(app, auth_client, project_uuid if by == "uuid" else "Code Project")
+    assert _redeem(client, code, verifier).status_code == HTTPStatus.OK
+    with app.app_context():
+        key = db.session.execute(select(APIKey)).scalars().one()
+        assert (key.entity_id, key.created_by_entity_id) == (project_id, test_user["id"])
+
+
+def test_code_non_member_403_without_row_or_redirect(auth_client, app):
+    project_with_member(app, "Closed")
+    resp = auth_client.get(_authorize_url(project="Closed")[0])
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert "Location" not in resp.headers
+    assert error_message(resp) == access_reason("Closed")
+    with app.app_context():
+        assert db.session.execute(select(AuthRequest)).scalars().all() == []
+
+
+def test_code_non_member_admin_403(admin_client, app):
+    _, project_uuid = project_with_member(app, "Admin Closed")
+    assert admin_client.get(_authorize_url(project=project_uuid)[0]).status_code == HTTPStatus.FORBIDDEN
+
+
+def test_code_project_too_long_rejected(auth_client):
+    resp = auth_client.get(_authorize_url(project="p" * 257)[0])
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"project must be at most 256 characters" in resp.data
+
+
+def test_code_member_removed_after_approval(client, auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Leaving", test_user["id"])
+    code, verifier = _consent_project(app, auth_client, "Leaving")
+    remove_member(app, project_id, test_user["id"])
+    resp = _redeem(client, code, verifier)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json() == {"error": "access_denied", "error_description": access_reason("Leaving")}
+    with app.app_context():
+        assert db.session.execute(select(APIKey)).scalars().all() == []
+        assert db.session.execute(select(AuthRequest)).scalars().one().status == "denied"
+
+
+def test_code_member_removed_before_consent_post(auth_client, app, test_user):
+    project_id, _ = project_with_member(app, "Leaving Early", test_user["id"])
+    assert auth_client.get(_authorize_url(project="Leaving Early")[0]).status_code == HTTPStatus.OK
+    remove_member(app, project_id, test_user["id"])
+    with app.app_context():
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
+    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert "Location" not in resp.headers

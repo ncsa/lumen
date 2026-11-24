@@ -1,0 +1,80 @@
+"""Shared setup for the OAuth project-key tests (device, code and consent page)."""
+import secrets
+
+import bs4
+from sqlalchemy import delete, select
+
+from lumen.extensions import db
+from lumen.models.api_key import APIKey
+from lumen.models.entity import Entity
+from lumen.models.entity_manager import EntityManager
+from lumen.services.crypto import hash_api_key
+from tests.conftest import make_project
+
+
+def project_with_member(app, name, member_id=None, role="manager", **fields):
+    """A project with ``member_id`` added in ``role`` (None: no member); returns (id, uuid string)."""
+    with app.app_context():
+        project = make_project(name, **fields)
+        if member_id is not None:
+            db.session.add(EntityManager(user_entity_id=member_id, project_entity_id=project.id, role=role))
+            db.session.commit()
+        return project.id, str(project.uuid)
+
+
+def add_member(app, project_id, user_id, role="user"):
+    with app.app_context():
+        db.session.add(EntityManager(user_entity_id=user_id, project_entity_id=project_id, role=role))
+        db.session.commit()
+
+
+def remove_member(app, project_id, user_id):
+    with app.app_context():
+        db.session.execute(delete(EntityManager).where(
+            EntityManager.project_entity_id == project_id, EntityManager.user_entity_id == user_id))
+        db.session.commit()
+
+
+def new_user(app, email):
+    with app.app_context():
+        user = Entity(entity_type="user", email=email, name=email, initials="NU", active=True)
+        db.session.add(user)
+        db.session.commit()
+        return user.id
+
+
+def project_key(app, project_id, creator_id, name):
+    """An active normal key in the project created by ``creator_id``; returns its id."""
+    raw = "sk_" + secrets.token_urlsafe(32)
+    with app.app_context():
+        key = APIKey(entity_id=project_id, created_by_entity_id=creator_id, name=name,
+                     key_hash=hash_api_key(raw), key_hint=f"{raw[:7]}...{raw[-4:]}")
+        db.session.add(key)
+        db.session.commit()
+        return key.id
+
+
+def active_keys(app, entity_id):
+    """(name, created_by_entity_id) of the entity's active keys, sorted."""
+    with app.app_context():
+        return sorted(
+            (k.name, k.created_by_entity_id) for k in db.session.execute(
+                select(APIKey).where(APIKey.entity_id == entity_id, APIKey.revoked_at.is_(None))
+            ).scalars()
+        )
+
+
+def access_reason(project):
+    return (f"the approving account is not a member of project '{project}', "
+            "or the project does not exist or is inactive")
+
+
+def one_key_reason(project):
+    return (f"members with the user role can hold one key in project '{project}'; "
+            "request it with the name of your existing key to replace it")
+
+
+def error_message(page) -> str:
+    """The message text of an oauth_error.html page."""
+    soup = bs4.BeautifulSoup(page.get_data(as_text=True), "html.parser")
+    return soup.select_one("h1 + p").get_text()
