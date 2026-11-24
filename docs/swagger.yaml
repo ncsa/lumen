@@ -459,7 +459,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          $ref: "#/components/responses/AnthropicRateLimit"
   /v1/organization/users:
     get:
       operationId: listUsers
@@ -649,6 +649,19 @@ components:
       description: |
         The per-key rate limit is exceeded (`code: rate_limit_exceeded`).
         Retry after the number of seconds in `Retry-After`.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    AnthropicRateLimit:
+      description: |
+        The per-key rate limit is exceeded. The body is the Anthropic
+        envelope, `{"type": "error", "error": {"type": "rate_limit_error",
+        "message": ...}}`, with no `code`. Retry after the number of seconds
+        in `Retry-After`.
       headers:
         Retry-After:
           $ref: "#/components/headers/RetryAfter"
