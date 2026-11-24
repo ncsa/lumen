@@ -18,7 +18,7 @@ from lumen.services import model_cache
 from lumen.services.key_expiry import expire_keys
 from lumen.timeutils import utcnow
 from tests.conftest import key_uuid
-from tests.routes.oauth_project_helpers import project_with_member
+from tests.routes.oauth_project_helpers import consent_form, project_with_member
 from tests.routes.test_api_auth import _api_allows, _capturing_openai, _CompletionResponse, _grant_unlimited_pool
 
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -574,10 +574,8 @@ def test_project_key_with_unapproved_model_is_refused_for_it(
     model_cache.refresh(app)
 
     body = _issue_project(client, project_uuid)
-    auth_client.get(f"/device?code={body['user_code']}")
-    resp = auth_client.post("/oauth/consent", data={
-        "request_id": str(_request_row(app, body["user_code"]).uuid), "action": "approve",
-    })
+    page = auth_client.get(f"/device?code={body['user_code']}")
+    resp = auth_client.post("/oauth/consent", data={**consent_form(page), "action": "approve"})
     assert resp.status_code == HTTPStatus.OK
     token = _poll(client, body).get_json()["access_token"]
 

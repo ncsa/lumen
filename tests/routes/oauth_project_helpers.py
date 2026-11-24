@@ -98,3 +98,10 @@ def delete_project_during_mint(monkeypatch, project_id):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(oauth_routes, "_project_key_denial", deleted_meanwhile)
+
+
+def consent_form(page) -> dict:
+    """The hidden fields of a rendered consent form (request id, and the project tag for project requests)."""
+    soup = bs4.BeautifulSoup(page.get_data(as_text=True), "html.parser")
+    return {i["name"]: i["value"] for i in soup.select('form[action$="/oauth/consent"] input[type=hidden]')
+            if i["name"] != "csrf_token"}

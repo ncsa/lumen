@@ -20,6 +20,7 @@ from tests.routes.oauth_project_helpers import (
     access_reason,
     active_keys,
     add_member,
+    consent_form,
     delete_project_during_mint,
     error_message,
     new_user,
@@ -83,8 +84,9 @@ def _set_last_polled(app, user_code, when):
 def _approve(app, auth_client, user_code, action="approve", overwrite=None):
     # Render the consent page first: the approve POST must reference a request
     # id that was actually shown to this session.
-    auth_client.get(f"/device?code={user_code}")
-    data = {"request_id": str(_request_row(app, user_code).uuid), "action": action}
+    page = auth_client.get(f"/device?code={user_code}")
+    # Submit the form's own hidden fields (the project tag for project requests).
+    data = {"request_id": str(_request_row(app, user_code).uuid), **consent_form(page), "action": action}
     if overwrite is not None:
         data["overwrite"] = "on" if overwrite else "off"
     return auth_client.post("/oauth/consent", data=data)
@@ -766,32 +768,59 @@ def test_project_value_rejected(client, value):
     assert resp.get_json()["error"] == "invalid_request"
 
 
-def test_consent_post_refuses_a_project_the_page_did_not_show(client, auth_client, app, test_user):
-    """The name now resolves to another project: the page is shown again for it, nothing approved."""
+def test_consent_post_approves_only_the_project_its_form_showed(client, auth_client, app, test_user):
+    """The name moves to another project: a form that showed the old one never approves the new one,
+    even after a later render showed the new project to the same session."""
     first_id, _ = project_with_member(app, "Rebind", test_user["id"])
     body = _issue_project(client, "Rebind")
-    assert auth_client.get(f"/device?code={body['user_code']}").status_code == HTTPStatus.OK
+    stale = consent_form(auth_client.get(f"/device?code={body['user_code']}"))
     with app.app_context():
         db.session.get(Entity, first_id).name = "Rebind (old)"
         db.session.commit()
     second_id, _ = project_with_member(app, "Rebind", test_user["id"],
                                        owner_id=new_user(app, "rebind-owner@example.com"))
-    request_id = str(_request_row(app, body["user_code"]).uuid)
 
-    resp = auth_client.post("/oauth/consent", data={"request_id": request_id, "action": "approve"})
+    resp = auth_client.post("/oauth/consent", data={**stale, "action": "approve"})
     assert resp.status_code == HTTPStatus.OK
     assert b"The project for this request changed" in resp.data
-    assert b'id="consent-project"' in resp.data
+    fresh = consent_form(resp)
+    assert fresh["consent_project"] != stale["consent_project"]
+
+    # The re-render showed the new project to this session; the old form still does not approve it,
+    # and neither does a form without the tag.
+    for form in (stale, {"request_id": stale["request_id"]}):
+        resp = auth_client.post("/oauth/consent", data={**form, "action": "approve"})
+        assert resp.status_code == HTTPStatus.OK
+        assert b"The project for this request changed" in resp.data
     row = _request_row(app, body["user_code"])
     assert (row.status, row.project_entity_id) == ("pending", None)
 
-    # Approving the page that showed the new project goes through, for that project.
-    resp = auth_client.post("/oauth/consent", data={"request_id": request_id, "action": "approve"})
+    resp = auth_client.post("/oauth/consent", data={**fresh, "action": "approve"})
     assert resp.status_code == HTTPStatus.OK and b"Key approved" in resp.data
     assert _request_row(app, body["user_code"]).project_entity_id == second_id
     assert _poll(client, body).status_code == HTTPStatus.OK
     assert active_keys(app, second_id) == [("opencode", test_user["id"])]
     assert not active_keys(app, first_id)
+
+
+def test_expired_claim_of_a_deleted_request_is_expired_token(client, auth_client, app, test_user, monkeypatch):
+    """The approved request expired and vanished after the poll read it: a 400, not a flush error."""
+    project_with_member(app, "Rho", test_user["id"])
+    body = _issue_project(client, "Rho")
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    _set_expiry(app, body["user_code"], utcnow() - timedelta(seconds=1))
+    real_utcnow = oauth_routes.utcnow
+
+    def deleted_after_read():
+        # Called right after _token_device has loaded the request.
+        db.session.execute(delete(AuthRequest).where(AuthRequest.user_code == body["user_code"])
+                           .execution_options(synchronize_session=False))
+        return real_utcnow()
+
+    monkeypatch.setattr(oauth_routes, "utcnow", deleted_after_read)
+    resp = _poll(client, body)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "expired_token"
 
 
 def test_project_deleted_during_claim_is_a_grant_error(client, auth_client, app, test_user, monkeypatch):

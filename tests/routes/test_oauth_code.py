@@ -16,6 +16,7 @@ from lumen.models.entity import Entity
 from lumen.timeutils import utcnow
 from tests.routes.oauth_project_helpers import (
     access_reason,
+    consent_form,
     delete_project_during_mint,
     error_message,
     new_user,
@@ -393,9 +394,7 @@ def _consent_project(app, auth_client, project):
     page = auth_client.get(url)
     assert page.status_code == HTTPStatus.OK
     assert b'id="consent-project"' in page.data
-    with app.app_context():
-        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
-    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    resp = auth_client.post("/oauth/consent", data={**consent_form(page), "action": "approve"})
     assert resp.status_code == HTTPStatus.FOUND
     return parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0], verifier
 
@@ -471,22 +470,27 @@ def test_code_project_value_rejected(auth_client, app, value):
         assert db.session.execute(select(AuthRequest)).scalars().all() == []
 
 
-def test_code_consent_post_refuses_a_project_the_page_did_not_show(client, auth_client, app, test_user):
+def test_code_consent_post_approves_only_the_project_its_form_showed(client, auth_client, app, test_user):
     first_id, _ = project_with_member(app, "Code Rebind", test_user["id"])
     url, verifier = _authorize_url(project=quote("Code Rebind", safe=""))
-    assert auth_client.get(url).status_code == HTTPStatus.OK
+    stale = consent_form(auth_client.get(url))
     with app.app_context():
         db.session.get(Entity, first_id).name = "Code Rebind (old)"
         db.session.commit()
-        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
     second_id, _ = project_with_member(app, "Code Rebind", test_user["id"],
                                        owner_id=new_user(app, "code-rebind-owner@example.com"))
 
-    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    resp = auth_client.post("/oauth/consent", data={**stale, "action": "approve"})
     assert resp.status_code == HTTPStatus.OK  # shown again, no redirect
     assert b"The project for this request changed" in resp.data
+    fresh = consent_form(resp)
 
-    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    # A stale form submitted after the re-render still does not approve, and does not redirect.
+    resp = auth_client.post("/oauth/consent", data={**stale, "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK
+    assert "Location" not in resp.headers
+
+    resp = auth_client.post("/oauth/consent", data={**fresh, "action": "approve"})
     assert resp.status_code == HTTPStatus.FOUND
     code = parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0]
     assert _redeem(client, code, verifier).status_code == HTTPStatus.OK

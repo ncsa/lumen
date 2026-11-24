@@ -22,7 +22,7 @@ from http import HTTPStatus
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
-from flask import Blueprint, g, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from sqlalchemy import case, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
@@ -470,9 +470,11 @@ def consent():
             if reason:
                 _deny_request(req, reason)
                 return _forbidden_page(reason)
-            if str(project.uuid) != session.get("oauth_consent_project"):
-                # The name now resolves to a different project than the page
-                # showed: approve only after the user has seen this one.
+            if not hmac.compare_digest(request.form.get("consent_project", ""),
+                                       _consent_project_tag(req, project)):
+                # The submitted form did not show this project for this request
+                # (the name now resolves elsewhere, or the form is stale or
+                # edited): approve only after the user has seen this one.
                 return _render_consent(
                     req, project=project,
                     error="The project for this request changed. Check it and approve again.",
@@ -616,7 +618,10 @@ def _token_device():
         return _oauth_error("authorization_pending", "waiting for user approval")
     if req.status == "approved":
         if req.expires_at <= now:
-            req.last_polled_at = now
+            # Guarded UPDATE, not an ORM write: the row may be gone by now
+            # (project deleted, ON DELETE CASCADE, or the janitor), and a
+            # flush of a vanished row would fail instead of answering.
+            db.session.execute(update(AuthRequest).where(AuthRequest.id == req.id).values(last_polled_at=now))
             db.session.commit()
             return _oauth_error("expired_token", "the claim window expired")
         # No ORM change to the row before the claim: if the request was deleted
@@ -817,14 +822,23 @@ def _existing_keys_stmt(entity_id: int, project: Entity | None, name: str):
     return stmt.order_by(APIKey.created_at.desc(), APIKey.id.desc())
 
 
+def _consent_project_tag(req: AuthRequest, project: Entity) -> str:
+    """HMAC over the request and the project a consent form shows.
+
+    The form carries it back, so consent POST approves only the project that
+    this very form displayed: a stale form, or one from before the requested
+    name moved to another project, does not match the project resolved now.
+    """
+    message = f"oauth-consent-project:{req.uuid}:{project.uuid}".encode()
+    return hmac.new(current_app.secret_key.encode(), message, hashlib.sha256).hexdigest()
+
+
 def _render_consent(req: AuthRequest, error: str | None = None, project: Entity | None = None):
     entity_id = g.entity_id
     existing_key = db.session.execute(
         _existing_keys_stmt(entity_id, project, req.requested_name)
     ).scalars().first()
     session["oauth_consent_request_id"] = str(req.uuid)
-    # The project this page showed; consent POST refuses to approve another one.
-    session["oauth_consent_project"] = str(project.uuid) if project is not None else None
     origin = full_uri = ""
     if req.flow == "code" and req.redirect_uri:
         parts = urlsplit(req.redirect_uri)
@@ -839,6 +853,7 @@ def _render_consent(req: AuthRequest, error: str | None = None, project: Entity 
         key_ttl_choices=key_ttl_choices(req.ttl),
         model_rows=_consent_model_rows(project.id if project is not None else entity_id),
         project=project,
+        consent_project_tag=_consent_project_tag(req, project) if project is not None else None,
         # project_consent() only lets owners and managers acknowledge for the project.
         can_ack=project is None or get_project_role(entity_id, project.id) in ("owner", "manager"),
         # The consent route's URL with the model name cut off; the page appends it.
