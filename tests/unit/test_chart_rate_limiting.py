@@ -42,14 +42,12 @@ def test_embedding_and_audio_render_when_set():
 
 
 def test_legacy_limit_renders_as_chat():
-    assert _rate_limiting({
-        "config.rateLimiting.chat": "",
-        "config.rateLimiting.limit": "45 per minute",
-    }) == {"chat": "45 per minute"}
+    """A 2.5.0 values file that only sets `limit` keeps working on upgrade."""
+    assert _rate_limiting({"config.rateLimiting.limit": "45 per minute"}) == {"chat": "45 per minute"}
 
 
 @pytest.mark.parametrize("extra, message", [
-    ({"config.rateLimiting.limit": "45 per minute"}, "not both"),
+    ({"config.rateLimiting.chat": "120 per minute", "config.rateLimiting.limit": "45 per minute"}, "not both"),
     ({"config.rateLimiting.embeddings": "500 per minute"}, "embeddings"),
     ({"config.rateLimiting.audio": "20"}, "audio"),
 ], ids=["chat-and-limit", "misspelled-key", "wrong-type"])

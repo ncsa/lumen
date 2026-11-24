@@ -137,13 +137,14 @@ config:
   #       pvc: mycorp-theme-pvc
   themes: {}
   rateLimiting:
-    # -- Rate limit per key for chat, completions and messages, e.g. "30 per minute"
-    chat: "30 per minute"
+    # -- Rate limit per key for chat, completions and messages, e.g. "120 per minute";
+    # empty uses the deprecated limit if set, else "30 per minute"
+    chat: ""
     # -- Rate limit per key for /v1/embeddings; empty uses the chat value in its own bucket
     embedding: ""
     # -- Rate limit per key for /v1/audio/*; empty uses the chat value in its own bucket
     audio: ""
-    # -- Deprecated (removed in 2.7.0): old name for chat; rendered as chat. Setting both fails.
+    # -- Deprecated (removed in 2.7.0): old name for chat, rendered as chat. Setting both chat and limit fails.
     limit: ""
   # -- Bounds on the calls Lumen makes to the upstream model endpoints. Without
   # these the OpenAI SDK defaults apply (600s timeout, 2 retries), so one stalled
