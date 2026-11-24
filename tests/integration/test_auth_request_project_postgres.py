@@ -73,4 +73,3 @@ def test_upgrade_adds_nullable_project_columns_and_downgrade_drops_them(pg_migra
     engine.dispose()
 
     migrate_db(url, "upgrade", "head")
-

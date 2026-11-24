@@ -132,7 +132,7 @@ The example is deliberately naive about key custody: a page whose only job is to
 
 ## Project keys
 
-Add `project` to either request to ask for a key for a [project](../projects/projects.md) instead of a personal key. It takes the project's UUID or its exact name; a value that looks like a UUID is matched against project UUIDs only. Project names are not guaranteed to be unique: if a name matches more than one project the request is refused, so prefer the UUID. The value may be at most 256 characters, otherwise the request fails with `invalid_request` (an error page in the authorization-code flow).
+Add `project` to either request to ask for a key for a [project](../projects/projects.md) instead of a personal key. It takes the project's UUID or its exact name; a value that looks like a UUID is matched against project UUIDs only. Project names are not guaranteed to be unique: if a name matches more than one project the request is refused, so prefer the UUID. It is used exactly as sent. A blank value, a value longer than 256 characters, or one containing a NUL character fails with `invalid_request` (an error page in the authorization-code flow).
 
 The project is looked up only once the user has signed in, so the device-flow request itself never reveals whether a project exists.
 
@@ -145,6 +145,8 @@ When the rule refuses a request, the browser shows an error page with HTTP **403
 
 - `the approving account is not a member of project '<project>', or the project does not exist or is inactive` (with `; use the project UUID` when the name matched more than one project)
 - `members with the user role can hold one key in project '<project>'; request it with the name of your existing key to replace it`
+
+If the name points at a different project when the user approves than when the page opened, the page is shown again with the new project and must be approved again. If the project is deleted after approval, the request goes with it, and `/oauth/token` answers `invalid_grant`.
 
 The reason repeats only the `project` value you sent. A plain **Deny** keeps the description `the user denied the request`. In the authorization-code flow, a refusal when the page opens or on approval is shown on the 403 page (there is no redirect), and a refusal at redemption returns the same `access_denied` error from `/oauth/token`.
 

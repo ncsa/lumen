@@ -448,7 +448,7 @@ Pending or handled API-key requests created by the OAuth device flow (`/oauth/de
 | `approved_at` | DateTime | YES | UTC approval timestamp |
 | `api_key_id` | Integer (FK → api_keys) | YES | Key minted at claim; retained to revoke on authorization-code replay. SET NULL on key delete. |
 | `requested_project` | String(256) | YES | Raw `project` value the requester sent (a project UUID or name, unverified); null for a personal key request. Resolved only once a user is logged in, so an anonymous request cannot probe which projects exist. |
-| `project_entity_id` | Integer (FK → entities) | YES | Project the key is minted for, resolved from `requested_project` at approval; null for a personal key. Cascades on delete. |
+| `project_entity_id` | Integer (FK → entities) | YES | Project the key is minted for, resolved from `requested_project` at approval; null for a personal key. Foreign key `fk_auth_requests_project_entity_id`, cascades on delete. |
 | `denial_reason` | String(512) | YES | Reason the token endpoint returns as `error_description` with `access_denied`; set in the same guarded update that denies the request (project access or one-key rule), null for a plain deny. Built only from `requested_project`, so renaming or deleting the project later does not change it. |
 
 **Notes:**

@@ -20,6 +20,7 @@ from tests.routes.oauth_project_helpers import (
     access_reason,
     active_keys,
     add_member,
+    delete_project_during_mint,
     error_message,
     new_user,
     one_key_reason,
@@ -748,3 +749,58 @@ def test_project_deactivated_after_approval_gets_access_denied(client, auth_clie
         db.session.commit()
     assert _poll(client, body).get_json() == {"error": "access_denied", "error_description": access_reason("Omicron")}
     assert not active_keys(app, project_id)
+
+
+@pytest.mark.parametrize("value", ["p" * 256, " Alpha ", "Name with spaces"])
+def test_project_value_stored_exactly(client, app, value):
+    body = _issue_project(client, value)
+    assert _request_row(app, body["user_code"]).requested_project == value
+
+
+@pytest.mark.parametrize("value", ["", "   ", "p" * 257, " " + "p" * 256, "a\x00b"])
+def test_project_value_rejected(client, value):
+    resp = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": "opencode", "project": value,
+    })
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "invalid_request"
+
+
+def test_consent_post_refuses_a_project_the_page_did_not_show(client, auth_client, app, test_user):
+    """The name now resolves to another project: the page is shown again for it, nothing approved."""
+    first_id, _ = project_with_member(app, "Rebind", test_user["id"])
+    body = _issue_project(client, "Rebind")
+    assert auth_client.get(f"/device?code={body['user_code']}").status_code == HTTPStatus.OK
+    with app.app_context():
+        db.session.get(Entity, first_id).name = "Rebind (old)"
+        db.session.commit()
+    second_id, _ = project_with_member(app, "Rebind", test_user["id"],
+                                       owner_id=new_user(app, "rebind-owner@example.com"))
+    request_id = str(_request_row(app, body["user_code"]).uuid)
+
+    resp = auth_client.post("/oauth/consent", data={"request_id": request_id, "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK
+    assert b"The project for this request changed" in resp.data
+    assert b'id="consent-project"' in resp.data
+    row = _request_row(app, body["user_code"])
+    assert (row.status, row.project_entity_id) == ("pending", None)
+
+    # Approving the page that showed the new project goes through, for that project.
+    resp = auth_client.post("/oauth/consent", data={"request_id": request_id, "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK and b"Key approved" in resp.data
+    assert _request_row(app, body["user_code"]).project_entity_id == second_id
+    assert _poll(client, body).status_code == HTTPStatus.OK
+    assert active_keys(app, second_id) == [("opencode", test_user["id"])]
+    assert not active_keys(app, first_id)
+
+
+def test_project_deleted_during_claim_is_a_grant_error(client, auth_client, app, test_user, monkeypatch):
+    project_id, _ = project_with_member(app, "Pi", test_user["id"])
+    body = _issue_project(client, "Pi")
+    assert _approve(app, auth_client, body["user_code"]).status_code == HTTPStatus.OK
+    delete_project_during_mint(monkeypatch, project_id)
+    resp = _poll(client, body)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "invalid_grant"
+    with app.app_context():
+        assert db.session.execute(select(APIKey)).scalars().all() == []

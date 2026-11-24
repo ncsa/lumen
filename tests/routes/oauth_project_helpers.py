@@ -4,8 +4,10 @@ import secrets
 import bs4
 from sqlalchemy import delete, select
 
+from lumen.blueprints.oauth import routes as oauth_routes
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
+from lumen.models.auth_request import AuthRequest
 from lumen.models.entity import Entity
 from lumen.models.entity_manager import EntityManager
 from lumen.services.crypto import hash_api_key
@@ -78,3 +80,21 @@ def error_message(page) -> str:
     """The message text of an oauth_error.html page."""
     soup = bs4.BeautifulSoup(page.get_data(as_text=True), "html.parser")
     return soup.select_one("h1 + p").get_text()
+
+
+def delete_project_during_mint(monkeypatch, project_id):
+    """Delete the project, its memberships and its requests once _mint has loaded the request.
+
+    Without autoflush, so a change the route made to the request beforehand is
+    still pending, as when a concurrent delete commits between the two.
+    """
+    real = oauth_routes._project_key_denial
+
+    def deleted_meanwhile(*args, **kwargs):
+        with db.session.no_autoflush:
+            db.session.execute(delete(EntityManager).where(EntityManager.project_entity_id == project_id))
+            db.session.execute(delete(AuthRequest).where(AuthRequest.project_entity_id == project_id))
+            db.session.execute(delete(Entity).where(Entity.id == project_id))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(oauth_routes, "_project_key_denial", deleted_meanwhile)

@@ -93,17 +93,21 @@ def _parse_ttl(raw: str | None) -> int | None:
 
 
 def _parse_project(raw: str | None) -> str | None:
-    """The raw ``project`` request value (a project UUID or name); None when absent.
+    """The ``project`` request value (a project UUID or name), exactly as sent; None when absent.
 
     Only the format is checked here: the value is resolved once a user is
     logged in, so an anonymous request cannot probe which projects exist.
-    Raises ValueError when it is too long.
+    Raises ValueError when it is supplied but blank, longer than the column
+    allows, or contains a NUL (which PostgreSQL text cannot store).
     """
-    raw = (raw or "").strip()
-    if not raw:
+    if raw is None:
         return None
+    if not raw.strip():
+        raise ValueError("project must not be blank")
     if len(raw) > PROJECT_MAX_LENGTH:
         raise ValueError(f"project must be at most {PROJECT_MAX_LENGTH} characters")
+    if "\x00" in raw:
+        raise ValueError("project must not contain NUL characters")
     return raw
 
 
@@ -152,10 +156,14 @@ def _project_key_denial(entity_id: int, project: Entity | None, requested_projec
     if lock:
         stmt = stmt.with_for_update()
     role = db.session.scalar(stmt)
+    if role is None:
+        return _access_denial(requested_project)
     if lock:
-        # Owner and active flag as of after the lock, not an earlier read.
+        # Owner and active flag as of after the lock, not an earlier read. The
+        # locked membership row keeps the project from being deleted meanwhile
+        # (its delete cascades to that row), so the refresh cannot miss it.
         db.session.refresh(project)
-    if role is None or not project.active:
+    if not project.active:
         return _access_denial(requested_project)
     if role == "user" and project.owner_entity_id != entity_id:
         other_key = db.session.scalar(
@@ -462,6 +470,13 @@ def consent():
             if reason:
                 _deny_request(req, reason)
                 return _forbidden_page(reason)
+            if str(project.uuid) != session.get("oauth_consent_project"):
+                # The name now resolves to a different project than the page
+                # showed: approve only after the user has seen this one.
+                return _render_consent(
+                    req, project=project,
+                    error="The project for this request changed. Check it and approve again.",
+                )
         overwrite = request.form.get("overwrite") == "on"
         existing = db.session.execute(
             _existing_keys_stmt(entity_id, project, req.requested_name)
@@ -600,11 +615,14 @@ def _token_device():
             return _oauth_error("expired_token", "the request expired")
         return _oauth_error("authorization_pending", "waiting for user approval")
     if req.status == "approved":
-        req.last_polled_at = now
         if req.expires_at <= now:
+            req.last_polled_at = now
             db.session.commit()
             return _oauth_error("expired_token", "the claim window expired")
-        return _mint(req)
+        # No ORM change to the row before the claim: if the request was deleted
+        # meanwhile (its project was, ON DELETE CASCADE), an autoflush would
+        # fail on it. The claim's guarded UPDATE records the poll instead.
+        return _mint(req, polled_at=now)
     if req.status == "denied":
         return _oauth_error("access_denied", req.denial_reason or "the user denied the request")
     return _oauth_error("invalid_grant", "already claimed")
@@ -651,7 +669,7 @@ def _pkce_s256_matches(verifier: str, challenge: str) -> bool:
     return hmac.compare_digest(computed, challenge)
 
 
-def _mint(req: AuthRequest):
+def _mint(req: AuthRequest, polled_at=None):
     """Atomically claim an approved request and mint the key (returned once)."""
     project = None
     if req.requested_project:
@@ -670,7 +688,7 @@ def _mint(req: AuthRequest):
     result = db.session.execute(
         update(AuthRequest)
         .where(AuthRequest.id == req.id, AuthRequest.status == "approved")
-        .values(status="claimed")
+        .values(status="claimed", **({"last_polled_at": polled_at} if polled_at else {}))
     )
     if result.rowcount == 0:
         db.session.rollback()
@@ -805,6 +823,8 @@ def _render_consent(req: AuthRequest, error: str | None = None, project: Entity 
         _existing_keys_stmt(entity_id, project, req.requested_name)
     ).scalars().first()
     session["oauth_consent_request_id"] = str(req.uuid)
+    # The project this page showed; consent POST refuses to approve another one.
+    session["oauth_consent_project"] = str(project.uuid) if project is not None else None
     origin = full_uri = ""
     if req.flow == "code" and req.redirect_uri:
         parts = urlsplit(req.redirect_uri)

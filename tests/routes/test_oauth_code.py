@@ -12,8 +12,16 @@ from sqlalchemy import select
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.auth_request import AuthRequest
+from lumen.models.entity import Entity
 from lumen.timeutils import utcnow
-from tests.routes.oauth_project_helpers import access_reason, error_message, project_with_member, remove_member
+from tests.routes.oauth_project_helpers import (
+    access_reason,
+    delete_project_during_mint,
+    error_message,
+    new_user,
+    project_with_member,
+    remove_member,
+)
 
 REDIRECT = "https://portal.example.org/lumen/callback"
 
@@ -444,3 +452,55 @@ def test_code_member_removed_before_consent_post(auth_client, app, test_user):
     resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert "Location" not in resp.headers
+
+
+@pytest.mark.parametrize("value", ["p" * 256, " Alpha "])
+def test_code_project_value_accepted_as_sent(auth_client, value):
+    # Valid format, unknown project: refused for access, not as an invalid request.
+    resp = auth_client.get(_authorize_url(project=quote(value, safe=""))[0])
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert error_message(resp) == access_reason(value)
+
+
+@pytest.mark.parametrize("value", ["", "   ", "p" * 257, " " + "p" * 256, "a\x00b"])
+def test_code_project_value_rejected(auth_client, app, value):
+    resp = auth_client.get(_authorize_url(project=quote(value, safe=""))[0])
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"Invalid authorization request" in resp.data
+    with app.app_context():
+        assert db.session.execute(select(AuthRequest)).scalars().all() == []
+
+
+def test_code_consent_post_refuses_a_project_the_page_did_not_show(client, auth_client, app, test_user):
+    first_id, _ = project_with_member(app, "Code Rebind", test_user["id"])
+    url, verifier = _authorize_url(project=quote("Code Rebind", safe=""))
+    assert auth_client.get(url).status_code == HTTPStatus.OK
+    with app.app_context():
+        db.session.get(Entity, first_id).name = "Code Rebind (old)"
+        db.session.commit()
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
+    second_id, _ = project_with_member(app, "Code Rebind", test_user["id"],
+                                       owner_id=new_user(app, "code-rebind-owner@example.com"))
+
+    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    assert resp.status_code == HTTPStatus.OK  # shown again, no redirect
+    assert b"The project for this request changed" in resp.data
+
+    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    assert resp.status_code == HTTPStatus.FOUND
+    code = parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0]
+    assert _redeem(client, code, verifier).status_code == HTTPStatus.OK
+    with app.app_context():
+        key = db.session.execute(select(APIKey)).scalars().one()
+        assert key.entity_id == second_id
+
+
+def test_code_project_deleted_during_redemption_is_a_grant_error(client, auth_client, app, test_user, monkeypatch):
+    project_id, _ = project_with_member(app, "Code Pi", test_user["id"])
+    code, verifier = _consent_project(app, auth_client, "Code Pi")
+    delete_project_during_mint(monkeypatch, project_id)
+    resp = _redeem(client, code, verifier)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "invalid_grant"
+    with app.app_context():
+        assert db.session.execute(select(APIKey)).scalars().all() == []
