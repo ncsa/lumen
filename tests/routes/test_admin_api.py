@@ -208,7 +208,10 @@ def test_no_request_logs_or_billing_writes(app, client, keys, admin_user, target
 
     before = snapshot()
     assert _get(client, _user_url(target["uuid"])).status_code == HTTPStatus.OK
-    assert snapshot() == before
+    after = snapshot()
+    # The call counts as one use of the admin key (resolve_api_key), but nothing is billed.
+    assert after[3] == before[3] + 1
+    assert after[:3] + after[4:] == before[:3] + before[4:]
 
 
 # ---------------------------------------------------------------------------
