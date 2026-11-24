@@ -483,11 +483,12 @@ function renderApi() {
     card('Monitoring', `
       ${field('mon-tok', 'Bearer Token', ti('mon-tok', m.token), 'for GET /v1/models health checks')}
     `) +
-    card('API Keys', KEY_TTL_FIELDS.map(f => keyTtlField(f, f.key === 'max_ttl' ? (k.max_ttl ?? k.ttl) : k[f.key])).join(''));
+    card('API Keys', KEY_TTL_FIELDS.map(f => keyTtlField(f, f.key === 'max_ttl' && !('max_ttl' in k) ? k.ttl : k[f.key])).join(''));
   KEY_TTL_FIELDS.forEach(f => checkKeyTtl(f.id));
 }
 // api.keys lifetime settings, one text field each.
-// A legacy api.keys.ttl fills Max key TTL when max_ttl is absent; saving writes it back as max_ttl.
+// A legacy api.keys.ttl fills Max key TTL only when max_ttl is absent (not merely null or blank),
+// matching the server, which ignores ttl whenever max_ttl is present; saving writes it back as max_ttl.
 const KEY_TTL_FIELDS = [
   { key: 'max_ttl',         id: 'keys-max-ttl',         label: 'Max key TTL',            placeholder: '0',
     help: 'Longest lifetime for normal keys. 0 = no limit; e.g. 12h, 30d, 8w' },

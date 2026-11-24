@@ -158,6 +158,26 @@ def test_editor_max_ttl_wins_over_legacy_ttl(editor):
     assert posted[0]["api"]["keys"] == {"max_ttl": "30d"}
 
 
+def test_editor_untouched_save_keeps_null_max_ttl_uncapped(editor):
+    """A present-but-null max_ttl makes the server ignore ttl (no cap); saving must not turn ttl into a cap."""
+    from lumen.services.config_watcher import _key_max_ttl
+
+    page, cfg, posted = editor
+    keys = {"max_ttl": None, "ttl": "30d", "default_ttl": "7d"}
+    assert _key_max_ttl(keys) == 0
+    _write_keys(cfg, keys)
+    _open_api_section(page)
+
+    assert page.input_value("#keys-max-ttl") == ""
+    _save(page)
+
+    expected = {"default_ttl": "7d"}
+    assert posted[0]["api"]["keys"] == expected
+    saved = yaml.safe_load(cfg.read_text())["api"]["keys"]
+    assert saved == expected
+    assert _key_max_ttl(saved) == 0
+
+
 def test_editor_does_not_write_blank_key_ttls(editor):
     page, cfg, posted = editor
     _write_keys(cfg, {"max_ttl": "30d", "max_admin_ttl": "1d", "default_ttl": "7d", "future_key": "kept"})
