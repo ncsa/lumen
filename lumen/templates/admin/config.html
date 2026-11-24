@@ -179,6 +179,12 @@ function normalizeLegacyConfig(data) {
     }
     delete m.audio_cost_per_minute;
   }
+  // Rate limiting: deprecated `limit` -> `chat` (removed in 2.7.0), so any save writes `chat`.
+  const rl = data.rate_limiting;
+  if (rl && typeof rl === 'object' && 'limit' in rl) {
+    if (rl.chat == null) rl.chat = rl.limit;
+    delete rl.limit;
+  }
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -536,12 +542,31 @@ function collectChat() {
 function renderRateLimiting() {
   const r = state.data.rate_limiting || {};
   $('cfg-body').innerHTML = card('Rate Limiting', `
-    ${field('rl-limit','Limit',ti('rl-limit',r.limit,'30 per minute'),'Flask-limiter format')}
+    ${field('rl-chat','Chat Limit',ti('rl-chat',r.chat,'30 per minute'),'Flask-limiter format; chat, completions and messages')}
+    ${row2(
+      field('rl-embed','Embedding Limit',ti('rl-embed',r.embedding,''),'blank = chat limit, own bucket'),
+      field('rl-audio','Audio Limit',ti('rl-audio',r.audio,''),'blank = chat limit, own bucket'))}
     ${field('rl-store','Redis Storage URL',ti('rl-store',r.storage_url,'redis://localhost:6379/0'),'blank = in-memory (dev only)')}
   `);
+  // Blank embedding/audio use the chat limit: show the effective value.
+  const syncPlaceholders = () => {
+    const eff = val('rl-chat') || '30 per minute';
+    $('rl-embed').placeholder = eff;
+    $('rl-audio').placeholder = eff;
+  };
+  $('rl-chat').addEventListener('input', syncPlaceholders);
+  syncPlaceholders();
 }
 function collectRateLimiting() {
-  state.data.rate_limiting = { limit: val('rl-limit') || undefined, storage_url: val('rl-store') || undefined };
+  // Keep rate_limiting.* keys this section has no field for.
+  const prev = state.data.rate_limiting && typeof state.data.rate_limiting === 'object' ? state.data.rate_limiting : {};
+  state.data.rate_limiting = {
+    ...prev,
+    chat: val('rl-chat') || undefined,
+    embedding: val('rl-embed') || undefined,
+    audio: val('rl-audio') || undefined,
+    storage_url: val('rl-store') || undefined,
+  };
 }
 
 // ── Admins ─────────────────────────────────────────────────────────────────

@@ -334,3 +334,85 @@ def test_editor_update_reports_unreachable_modelsdev(editor, monkeypatch, update
     assert page.text_content("#cfg-toast .alert").strip() == toast
     assert page.input_value("#mdl-ctx") == ("32768" if updates else "")
     assert posted[-1]["name"] == "cached-model"
+
+
+RATE_CONFIG = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+rate_limiting:
+  chat: 120 per minute
+  embedding: 500 per minute
+  audio: 20 per minute
+  storage_url: redis://cache:6379/0
+"""
+
+
+def _open_rate_section(page):
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-rate_limiting")
+    page.wait_for_selector("#rl-chat")
+
+
+def _save(page, cfg):
+    page.click("#btn-save")
+    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+    return yaml.safe_load(cfg.read_text())["rate_limiting"]
+
+
+def test_editor_round_trips_all_rate_limits(editor):
+    """Loaded chat/embedding/audio survive a save, from any section."""
+    page, cfg, _ = editor
+    cfg.write_text(RATE_CONFIG)
+    expected = {
+        "chat": "120 per minute", "embedding": "500 per minute",
+        "audio": "20 per minute", "storage_url": "redis://cache:6379/0",
+    }
+
+    # Saving from another section leaves rate_limiting untouched.
+    _open_api_section(page)
+    assert _save(page, cfg) == expected
+
+    _open_rate_section(page)
+    _run_all_checks(page.content().encode(), "/admin/config (Rate Limiting section)")
+    assert page.input_value("#rl-chat") == "120 per minute"
+    assert page.input_value("#rl-embed") == "500 per minute"
+    assert page.input_value("#rl-audio") == "20 per minute"
+    assert _save(page, cfg) == expected
+
+
+def test_editor_omits_blank_embedding_and_audio(editor):
+    page, cfg, _ = editor
+    cfg.write_text(RATE_CONFIG)
+    _open_rate_section(page)
+
+    page.fill("#rl-embed", "")
+    page.fill("#rl-audio", "")
+    # Blank fields show the effective chat value, and follow it as it changes.
+    assert page.get_attribute("#rl-embed", "placeholder") == "120 per minute"
+    page.fill("#rl-chat", "60 per minute")
+    assert page.get_attribute("#rl-audio", "placeholder") == "60 per minute"
+    assert _save(page, cfg) == {"chat": "60 per minute", "storage_url": "redis://cache:6379/0"}
+
+    page.fill("#rl-embed", "300 per minute")
+    page.fill("#rl-audio", "10 per minute")
+    assert _save(page, cfg) == {
+        "chat": "60 per minute", "embedding": "300 per minute",
+        "audio": "10 per minute", "storage_url": "redis://cache:6379/0",
+    }
+
+
+@pytest.mark.parametrize("section", ["api", "rate_limiting"])
+def test_editor_saves_legacy_limit_as_chat(editor, section):
+    page, cfg, posted = editor
+    cfg.write_text(_CONFIG + "rate_limiting:\n  limit: 45 per minute\n")
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click(f"#nav-{section}")
+    if section == "rate_limiting":
+        page.wait_for_selector("#rl-chat")
+        assert page.input_value("#rl-chat") == "45 per minute"
+        assert page.get_attribute("#rl-embed", "placeholder") == "45 per minute"
+
+    assert _save(page, cfg) == {"chat": "45 per minute"}
+    assert "limit" not in posted[0]["rate_limiting"]

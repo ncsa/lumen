@@ -202,7 +202,10 @@ models:
 | `config.configEditor` | `false` | Allow editing config.yaml from the `/admin/config` UI (read-only by default since the chart manages the config) |
 | `config.defaults.models.ackMessage` | `""` | Global acknowledgement message for `needsAck` models without their own |
 | `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for entities with no UI-set limit and no group pool |
-| `config.rateLimiting.limit` | `"30 per minute"` | Rate limit per user |
+| `config.rateLimiting.chat` | `"30 per minute"` | Rate limit per key for chat, completions and messages |
+| `config.rateLimiting.embedding` | `""` | Rate limit per key for `/v1/embeddings`; empty uses the chat value in its own bucket |
+| `config.rateLimiting.audio` | `""` | Rate limit per key for `/v1/audio/*`; empty uses the chat value in its own bucket |
+| `config.rateLimiting.limit` | `""` | Deprecated (removed in 2.7.0): old name for `chat`, rendered as `chat`; setting both fails |
 | `config.llm.connectTimeout` | `5` | Seconds to establish the connection to a model backend |
 | `config.llm.readTimeout` | `300` | Streaming calls: maximum gap between chunks (not total duration) |
 | `config.llm.requestTimeout` | `600` | Non-streaming calls: bound on the whole generation |
