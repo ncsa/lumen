@@ -126,8 +126,12 @@
         },
         "rateLimiting": {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "limit": { "type": "string" }
+            "chat": { "type": "string" },
+            "limit": { "type": "string" },
+            "embedding": { "type": "string" },
+            "audio": { "type": "string" }
           }
         },
         "llm": {
