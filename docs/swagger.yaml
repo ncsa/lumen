@@ -29,7 +29,27 @@ tags:
   - name: OpenAI
   - name: Anthropic
   - name: Admin
+  - name: Spec
 paths:
+  /v1/openapi.yaml:
+    get:
+      operationId: getOpenApiSpec
+      tags: [Spec]
+      summary: This OpenAPI spec
+      description: |
+        Access: no key needed (public).
+
+        Returns this OpenAPI document as YAML, with the server URL set to the
+        Lumen instance that serves it.
+      x-access: [public]
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI spec of the `/v1/` API.
+          content:
+            application/yaml:
+              schema:
+                type: string
   /v1/usage:
     get:
       operationId: getUsage

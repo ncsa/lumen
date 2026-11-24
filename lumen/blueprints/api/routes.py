@@ -3,7 +3,7 @@ import json
 import logging
 import math
 import time as _time
-from functools import wraps
+from functools import cache, wraps
 from http import HTTPStatus
 from urllib.parse import quote
 
@@ -12,6 +12,7 @@ from flask import Blueprint, Response, current_app, g, jsonify, request
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from lumen.blueprints.help.routes import DOCS_DIR, _substitute_actual_host
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
 from lumen.extensions import db, limiter
@@ -374,6 +375,22 @@ def api_key_required(f):
         return f(*args, **kwargs)
 
     return decorated
+
+
+@cache
+def _openapi_spec_text() -> str:
+    """``docs/swagger.yaml`` as shipped, read from disk once per process."""
+    return (DOCS_DIR / "swagger.yaml").read_text(encoding="utf-8")
+
+
+@api_bp.route("/openapi.yaml", methods=["GET"])
+def openapi_spec():
+    """The OpenAPI spec of the /v1 API, public: no key, no DB.
+
+    The spec's placeholder server URL becomes this instance's own URL, so a
+    client generated from it points here.
+    """
+    return Response(_substitute_actual_host(_openapi_spec_text()), mimetype="application/yaml")
 
 
 @api_bp.route("/usage", methods=["GET"])

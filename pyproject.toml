@@ -47,6 +47,7 @@ dev = [
     "yamllint>=1.35",
     "mkdocs-material>=9.7.7",
     "openapi-spec-validator>=0.7",
+    "mkdocs-swagger-ui-tag>=0.8",
 ]
 
 [tool.pytest.ini_options]
