@@ -168,11 +168,25 @@ config:
     # time by about foldLag + foldInterval.
     foldLag: 300
   api:
+    # API key lifetimes. Each takes "0" or a duration such as "12h", "30d" or
+    # "8w"; empty leaves the server default. They apply to keys created
+    # afterwards; an expired key is revoked.
     keys:
-      # -- Maximum and default API key lifetime: "0" (keys never expire) or a
-      # duration such as "12h", "30d" or "8w". Applies to keys created afterwards;
-      # an expired key is revoked.
-      ttl: "0"
+      # -- Maximum lifetime of normal keys; "0" means no limit (keys may never
+      # expire). Empty falls back to the deprecated ttl, else "0".
+      maxTtl: ""
+      # -- Maximum lifetime of admin keys; "0" means no limit. Empty uses the
+      # server default of 7d.
+      maxAdminTtl: ""
+      # -- Maximum lifetime of monitoring keys; "0" means no limit. Empty uses
+      # the server default of no limit.
+      maxMonitorTtl: ""
+      # -- Default lifetime of every key type, lowered to that type's maximum;
+      # "0" means never expire. Empty makes each type default to its maximum.
+      defaultTtl: ""
+      # -- Deprecated: use maxTtl. Used as maxTtl when maxTtl is empty; removed
+      # in 2.7.
+      ttl: ""
   # -- Raw YAML appended verbatim to config.yaml (for settings not covered by chart values)
   extraConfig: ""
 

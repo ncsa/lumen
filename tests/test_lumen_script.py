@@ -1161,6 +1161,14 @@ def test_help_lists_aliases_flags(home, lumen_server):
     assert b"--no-aliases     Skip alias entries" in r.stdout
 
 
+def test_help_says_ttl_defaults_to_the_servers_default(home, lumen_server):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=["--help"])
+    assert r.returncode == 0, r.stderr
+    assert b"8w (default: the server's default)." in r.stdout
+    assert b"server's maximum" not in r.stdout
+
+
 def _opencode_models(home):
     cfg = json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
     return set(cfg["provider"]["lumen"]["models"])

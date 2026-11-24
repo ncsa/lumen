@@ -36,7 +36,7 @@ Both configs are filled from one `/v1/models` request, and the script prints the
 | `-k`, `--keyname NAME` | Name for the requested key (default `opencode`) |
 | `--author LABEL` | Label shown to the approver (default `$USER`) |
 | `--client-id ID` | `client_id` sent to Lumen (default `lumen-cli`) |
-| `--ttl DURATION` | Ask for a key that expires after `DURATION`: `0` (never) or hours, days or weeks such as `12h`, `30d`, `8w` (default: the server's maximum, `api.keys.ttl`). Pre-selects the approval page's **Expires after** choice, which the approver can change; the server rejects a value above its maximum, and `0` when keys must expire. Only used when a new key is requested |
+| `--ttl DURATION` | Ask for a key that expires after `DURATION`: `0` (never) or hours, days or weeks such as `12h`, `30d`, `8w` (default: the server's default, `api.keys.default_ttl` lowered to `api.keys.max_ttl`). Pre-selects the approval page's **Expires after** choice, which the approver can change; the server rejects a value above its maximum, and `0` when keys must expire. Only used when a new key is requested |
 | `--opencode` | Sync the model catalog into `opencode.json` or `opencode.jsonc` (default) |
 | `--no-opencode` | Leave the opencode config untouched; with no Copilot sync either, only log in and store the key |
 | `--shell` | Write the key and server into your shell's rc file (default) |

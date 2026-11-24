@@ -95,18 +95,19 @@ In admin mode, the dialog has a **Key type** select. Changing it generates a new
 
 | Type | Prefix | What it can do | Expires after |
 |------|--------|----------------|---------------|
-| **Normal** (default) | `sk_` | Chat and the rest of the API, billed to you | Up to the maximum key lifetime (see [Key Expiry](#key-expiry)) |
-| **Admin** | `sk_admin_` | The model list with token metrics, and the [admin API](api-reference.md#admin-api); never chat | At most 1 week, or the maximum key lifetime if that is shorter; never **Never**. Defaults to the longest allowed |
-| **Monitoring** | `sk_monitor_` | Only the model list with token metrics, for uptime monitors such as `scripts/monitor` | Anything, including **Never**, whatever the maximum key lifetime; defaults to **Never** |
+| **Normal** (default) | `sk_` | Chat and the rest of the API, billed to you | Up to the maximum for normal keys (see [Key Expiry](#key-expiry)) |
+| **Admin** | `sk_admin_` | The model list with token metrics, and the [admin API](api-reference.md#admin-api); never chat | Up to the maximum for admin keys, 1 week unless your administrator changed it |
+| **Monitoring** | `sk_monitor_` | Only the model list with token metrics, for uptime monitors such as `scripts/monitor` | Up to the maximum for monitoring keys; by default no limit, so **Never** is allowed |
 
 Admin and monitoring keys are never billed, and they stop working when their owner is removed from the `admins` list (they work again if the owner is added back). See the [access matrix](api-reference.md#key-types-and-access) for every endpoint. Keys of a project or requested through OAuth are always normal keys.
 
 #### Key Expiry
 
-For a normal key, **Expires after** offers 1 day, 7 days, 30 days, 90 days, 1 year and Never, limited by the maximum key lifetime your administrator set (`api.keys.ttl`, see [Application settings](../admin/config-application.md)):
+**Expires after** offers 1 day, 7 days, 30 days, 90 days, 1 year and Never, limited by the maximum your administrator set for the key's type (`api.keys.max_ttl` for normal keys, `max_admin_ttl` for admin keys, `max_monitor_ttl` for monitoring keys; see [Application settings](../admin/config-application.md#apikeys)):
 
-- When there is a maximum, only choices up to it are shown. The maximum itself is always offered and is selected by default, and **Never** is not offered.
-- When there is no maximum (the default), every choice is offered and **Never** is selected by default.
+- When there is a maximum, only choices up to it are shown. The maximum itself is always offered, and **Never** is not offered.
+- When there is no maximum, every choice is offered, including **Never**.
+- The default lifetime (`api.keys.default_ttl`) is selected, lowered to the maximum when it is longer. Without a default lifetime, the maximum is selected, or **Never** when there is no maximum.
 
 The expiry is fixed when the key is created or its expiry is edited (see [Changing a Key's Expiry](#changing-a-keys-expiry)); a later change to the maximum does not affect it. When a key expires it is revoked automatically and stops working, like a key you revoke yourself. An expired key cannot be edited; create a new key to replace it.
 

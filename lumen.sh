@@ -21,7 +21,7 @@ usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
       --client-id ID   client_id sent to Lumen (default: lumen-cli)
       --ttl DURATION   Ask for a key that expires after DURATION: 0 (never)
                        or a number of hours, days or weeks, e.g. 12h, 30d,
-                       8w (default: the server's maximum). Only used when a
+                       8w (default: the server's default). Only used when a
                        new key is requested; the approver can change it
       --opencode       Sync the model catalog into the opencode config
                        (default): $OPENCODE_CONFIG, else

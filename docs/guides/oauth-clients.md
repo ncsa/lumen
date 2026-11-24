@@ -131,10 +131,10 @@ The example is deliberately naive about key custody: a page whose only job is to
 
 ## Key expiry
 
-A Lumen administrator can make keys expire with `api.keys.ttl`, which is both the longest lifetime a key may have and the default. Its default is `0`: no maximum, and keys never expire unless one is asked for.
+A Lumen administrator can make keys expire with `api.keys.max_ttl`, the longest lifetime a key may have, and `api.keys.default_ttl`, the lifetime a key gets when none is asked for (lowered to `max_ttl` when larger). Keys from these flows are always normal keys. By default there is no maximum and no default, so keys never expire unless one is asked for.
 
-- Send `ttl` (seconds) to ask for a shorter lifetime. A value that is not a whole number, is above the maximum, or is `0` (never) while the server has a maximum is rejected with `invalid_request`. Leave it out to get the server's maximum.
-- The approver sees an **Expires after** choice on the consent page, pre-selected with your `ttl` (or the maximum) and may change it; the server checks the choice again.
+- Send `ttl` (seconds) to ask for a different lifetime. A value that is not a whole number, is above the maximum, or is `0` (never) while the server has a maximum is rejected with `invalid_request`. Leave it out to get the server's default: `default_ttl` lowered to `max_ttl`, or `max_ttl` when no default is set.
+- The approver sees an **Expires after** choice on the consent page, pre-selected with your `ttl` (or the server's default) and may change it; the server checks the choice again.
 - The key's lifetime counts from the moment it is minted, at `/oauth/token`. The token response's `expires_at` gives the expiry in UTC (ISO 8601, e.g. `2026-11-16T12:00:00Z`), or `null` when the key never expires.
 - An expired key is revoked: `/v1` answers `401`, and your tool should run the key request again. Users can also change an existing key's expiry on their [Profile](./profile.md).
 
@@ -145,6 +145,6 @@ A Lumen administrator can make keys expire with `api.keys.ttl`, which is both th
 - Users must be signed in; you never see or handle credentials.
 - Every unverified `client_id` is shown under an **Unverified application** warning banner.
 - The model list is a table with an **Acknowledgment** column, matching the Models page: **required** pills with an **Acknowledge** button for models needing consent (the same dialog as the profile page, recorded immediately when confirmed, independent of the approve button), **acknowledged** pills with the acceptance date, and **early access** pills.
-- An **Expires after** dropdown sets how long the key stays valid, counted from when the application collects it. It offers choices up to the server's maximum, pre-selects the requested `ttl` (or the maximum), and the server checks the choice again on approval.
+- An **Expires after** dropdown sets how long the key stays valid, counted from when the application collects it. It offers choices up to the server's maximum, pre-selects the requested `ttl` (or the server's default), and the server checks the choice again on approval.
 - Approving does not change any existing keys unless the user ticked **Replace the secret of key …** for a same-name key; the page then shows the key's current hint so users recognize what they're replacing. That key keeps its name and usage stats and only gets a new secret, once the application collects it.
 - Keys created through these flows record their `client_id` (and `author`) as provenance, visible on the user's [Profile](./profile.md) key list tooltip, so users can see which tool asked for each key and revoke it there. A revoked key is deactivated and its usage kept; it stays listed under **Show revoked keys**, with the revocation time and, when known, who revoked it in the badge tooltip. A key revoked automatically because its authorization code was replayed shows no name. Times for keys revoked before this was recorded are approximate.
